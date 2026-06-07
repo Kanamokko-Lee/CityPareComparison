@@ -41,6 +41,7 @@ body {
   padding: 6px 16px; font-size: 11px; font-weight: 700; color: var(--accent);
   letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
   pointer-events: none; transition: opacity 0.3s; display: flex; align-items: center; gap: 6px;
+  white-space: nowrap;
 }
 #ibar::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
 @keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
@@ -207,6 +208,19 @@ const FIXES = {
   'A1':   [10.8000, 106.7000]
 };
 
+// デフォルトの初期ルートデータを定義
+const DEFAULT_ROUTES = [
+  {id:1, label:'VRNT 1', via:'Y52N89Q15', color:'#00ddff', dash:null,
+   tripf:56460, time:5.41,
+   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','IGURU','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
+  {id:2, label:'VRNT 2', via:'Y50N89Q15', color:'#ffaa22', dash:'10,5',
+   tripf:57823, time:5.42,
+   rawWps:['NRT','PIGOK','IGMON','DRAKE','TINHO','HCN','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
+  {id:3, label:'VRNT 3', via:'Y52A1', color:'#cc66ff', dash:'14,5',
+   tripf:58839, time:5.46,
+   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','AKARA','GOMAN','MUMAN','SABIS','CRA','SOSPA','VETOM','SGN']}
+];
+
 let MAP, ROUTES = [], LAYERS = [];
 let selId = null;
 let hidden = new Set();
@@ -229,6 +243,8 @@ window.addEventListener('DOMContentLoaded', () => {
 
   tile.getContainer().classList.add('dark-tile');
 
+  // 初期時はデフォルトルートを読み込む
+  ROUTES = JSON.parse(JSON.stringify(DEFAULT_ROUTES));
   render();
 });
 
@@ -236,7 +252,7 @@ window.addEventListener('DOMContentLoaded', () => {
 // RENDERING LOGIC (MAP & OVERLAYS)
 // ═══════════════════════════════════════════════
 function render() {
-  // 既存レイヤーの安全な完全クリア (バグ修正箇所)
+  // 既存レイヤーのクリア
   LAYERS.forEach(l => MAP.removeLayer(l));
   LAYERS = [];
 
@@ -396,12 +412,12 @@ function onFile(file) {
   setTimeout(() => {
     document.getElementById('ta').value = `VRNT 1 VIA Y52N89Q15 TRIPF 56460 TIME 5.41\nROUTE: NRT SAMUS HCE YULIA TONAR IGURU KABAM MESOX CRA SOSPA VETOM SGN`;
     st.textContent = '';
-    stab('txt'); // タブの自動切り替え (改善点)
+    stab('txt');
   }, 800);
 }
 
 // ═══════════════════════════════════════════════
-// PARSER & INGESTION LOGIC (堅牢化)
+// PARSER & INGESTION LOGIC
 // ═══════════════════════════════════════════════
 function doParse() {
   const ta = document.getElementById('ta');
@@ -435,7 +451,8 @@ function doParse() {
 }
 
 function parseText(text) {
-  const lines = text.split('\n');
+  // 改行コード（\r\n または \n）で確実に分割（バグ修正箇所）
+  const lines = text.split(/\r?\n/);
   let currentRoute = null;
   let routes = [];
   let idCounter = 1;
@@ -489,21 +506,6 @@ function parseText(text) {
   if (currentRoute) routes.push(currentRoute);
   return routes;
 }
-
-// ═══════════════════════════════════════════════
-// DEFAULT MOCK DATA
-// ═══════════════════════════════════════════════
-ROUTES = [
-  {id:1, label:'VRNT 1', via:'Y52N89Q15', color:'#00ddff', dash:null,
-   tripf:56460, time:5.41,
-   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','IGURU','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
-  {id:2, label:'VRNT 2', via:'Y50N89Q15', color:'#ffaa22', dash:'10,5',
-   tripf:57823, time:5.42,
-   rawWps:['NRT','PIGOK','IGMON','DRAKE','TINHO','HCN','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
-  {id:3, label:'VRNT 3', via:'Y52A1', color:'#cc66ff', dash:'14,5',
-   tripf:58839, time:5.46,
-   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','AKARA','GOMAN','MUMAN','SABIS','CRA','SOSPA','VETOM','SGN']}
-];
 </script>
 
 </body>
