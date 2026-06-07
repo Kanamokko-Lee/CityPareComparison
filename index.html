@@ -15,127 +15,116 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&display=swap');
-
 :root {
   --bg:#080d18; --panel:#0b1220; --border:#1a2e4a; --hi:#1e3d60;
   --text:#ddeeff; --muted:#6090b0; --accent:#80d0f0;
   --best:#40e090; --worst:#ff6060; --hdr:48px;
 }
-* { box-sizing:border-box; margin:0; padding:0 }
-html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:'Rajdhani',sans-serif }
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif}
 
-/* ── Header ── */
-#hdr {
-  position:fixed; top:0; left:0; right:0; z-index:900;
+#hdr{
+  position:fixed;top:0;left:0;right:0;z-index:900;
   height:calc(var(--hdr) + env(safe-area-inset-top,0px));
   padding:env(safe-area-inset-top,0px) 14px 0;
-  background:#080d18; border-bottom:1px solid var(--hi);
-  display:flex; align-items:center; gap:10px;
+  background:#080d18;border-bottom:1px solid var(--hi);
+  display:flex;align-items:center;gap:10px;
 }
-#hdr h1 {
-  flex:1; font-size:clamp(0.9rem,3vw,1.15rem); font-weight:700;
-  letter-spacing:.1em; color:var(--accent);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-}
-#inp-btn {
-  background:#0f2a45; border:1px solid var(--hi); border-radius:6px;
-  padding:7px 14px; font-family:'Share Tech Mono',monospace;
-  font-size:0.82rem; color:var(--accent); cursor:pointer; flex-shrink:0;
-}
-#inp-btn:hover { background:#142f52 }
+#hdr h1{flex:1;font-size:clamp(0.9rem,3vw,1.15rem);font-weight:700;letter-spacing:.1em;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#inp-btn{background:#0f2a45;border:1px solid var(--hi);border-radius:6px;padding:7px 14px;font-family:'Share Tech Mono',monospace;font-size:0.82rem;color:var(--accent);cursor:pointer;flex-shrink:0}
+#inp-btn:hover{background:#162f52}
 
-/* ── Full-screen map ── */
-#map {
+/* Full-screen map */
+#map{
   position:fixed;
   top:calc(var(--hdr) + env(safe-area-inset-top,0px));
-  left:0; right:0; bottom:env(safe-area-inset-bottom,0px);
+  left:0;right:0;bottom:env(safe-area-inset-bottom,0px);
   z-index:1;
 }
 
-/* ── Leaflet overrides ── */
-.leaflet-container { background:#04080f }
-.leaflet-tile { filter:brightness(.55) saturate(.35) hue-rotate(195deg) }
-.leaflet-control-zoom { border:1px solid var(--hi)!important }
-.leaflet-control-zoom a { background:#0b1220!important; color:var(--accent)!important; border-bottom:1px solid var(--border)!important; font-size:1.1rem!important }
-.leaflet-popup-content-wrapper { background:#0a1825!important; border:1px solid var(--hi)!important; border-radius:6px!important; box-shadow:0 4px 20px rgba(0,0,0,.8)!important }
-.leaflet-popup-tip { background:#0a1825!important }
-.leaflet-popup-content { color:var(--text)!important; font-family:'Share Tech Mono',monospace!important; font-size:0.78rem!important; margin:8px 12px!important }
-.pn { font-size:1rem; font-weight:700; color:var(--accent); margin-bottom:3px; font-family:'Rajdhani',sans-serif!important }
-.ps { color:var(--muted); font-size:0.7rem; line-height:1.5 }
+/* Leaflet */
+.leaflet-container{background:#04080f}
+.leaflet-tile{filter:brightness(.55) saturate(.35) hue-rotate(195deg)}
+.leaflet-control-zoom{border:1px solid var(--hi)!important}
+.leaflet-control-zoom a{background:#0b1220!important;color:var(--accent)!important;border-bottom:1px solid var(--border)!important;font-size:1.1rem!important}
+.leaflet-popup-content-wrapper{background:#0a1825!important;border:1px solid var(--hi)!important;border-radius:6px!important;box-shadow:0 4px 20px rgba(0,0,0,.8)!important}
+.leaflet-popup-tip{background:#0a1825!important}
+.leaflet-popup-content{color:var(--text)!important;font-family:'Share Tech Mono',monospace!important;font-size:0.78rem!important;margin:8px 12px!important}
+.pn{font-size:1rem;font-weight:700;color:var(--accent);margin-bottom:3px;font-family:'Rajdhani',sans-serif!important}
+.ps{color:var(--muted);font-size:0.7rem;line-height:1.5}
 
-/* ── Route label on map ── */
-/* SVG overlay for leader lines is drawn by JS onto #label-svg */
-#label-svg {
-  position:absolute; top:0; left:0; width:100%; height:100%;
-  pointer-events:none; z-index:400;
-}
-/* Individual route info boxes floating on map */
-.rl {
-  position:absolute; z-index:450; pointer-events:auto;
-  background:rgba(8,14,26,0.88);
-  border:2px solid transparent; /* set per route */
-  border-radius:8px; padding:8px 12px;
-  min-width:130px; cursor:pointer;
-  backdrop-filter:blur(4px);
-  transition:opacity .2s, box-shadow .2s;
-  line-height:1.35;
-}
-.rl:hover { box-shadow:0 0 14px rgba(255,255,255,.18) }
-.rl.off { opacity:.2 }
-.rl.sel { box-shadow:0 0 18px rgba(255,255,255,.3) }
-.rl-vrnt { font-size:1.05rem; font-weight:700; letter-spacing:.06em }
-.rl-via  { font-family:'Share Tech Mono',monospace; font-size:0.92rem; color:var(--muted); margin-top:1px }
-.rl-row  { display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-top:5px }
-.rl-key  { font-family:'Share Tech Mono',monospace; font-size:0.75rem; color:var(--muted); text-transform:uppercase }
-.rl-val  { font-family:'Share Tech Mono',monospace; font-size:1.0rem; font-weight:bold; color:#c0e0ff }
-.rl-val.best  { color:var(--best) }
-.rl-val.worst { color:var(--worst) }
-.rl-diff { font-family:'Share Tech Mono',monospace; font-size:0.8rem; color:#ff9050 }
+/* SVG overlay for leader lines */
+#lsvg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:400;}
 
-/* ── Info bar top ── */
-#ibar {
-  position:absolute; top:10px; left:50%; transform:translateX(-50%);
-  background:rgba(8,13,24,.88); border:1px solid var(--hi); border-radius:16px;
-  padding:4px 16px; z-index:600; pointer-events:none;
-  font-family:'Share Tech Mono',monospace; font-size:0.78rem; color:var(--muted);
-  white-space:nowrap; max-width:90%; overflow:hidden; text-overflow:ellipsis;
+/* Route label boxes */
+.rl{
+  position:absolute;z-index:450;pointer-events:auto;
+  background:rgba(6,12,22,0.92);
+  border:2.5px solid transparent;
+  border-radius:9px;padding:10px 14px;
+  width:160px;
+  cursor:pointer;
+  backdrop-filter:blur(6px);
+  transition:opacity .2s,box-shadow .2s;
+  line-height:1.4;
+  user-select:none;
+}
+.rl:hover{box-shadow:0 0 16px rgba(255,255,255,.2)}
+.rl.off{opacity:.18;pointer-events:none}
+.rl.sel{box-shadow:0 0 20px rgba(255,255,255,.28)}
+.rl-vrnt{font-size:1.1rem;font-weight:700;letter-spacing:.05em}
+.rl-via{font-family:'Share Tech Mono',monospace;font-size:0.9rem;color:var(--muted);margin-top:1px;word-break:break-all}
+.rl-sep{height:1px;background:rgba(255,255,255,.1);margin:7px 0}
+.rl-row{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-top:4px}
+.rl-key{font-family:'Share Tech Mono',monospace;font-size:0.72rem;color:var(--muted);text-transform:uppercase;flex-shrink:0}
+.rl-val{font-family:'Share Tech Mono',monospace;font-size:1.05rem;font-weight:bold;color:#c8e8ff;text-align:right}
+.rl-val.best{color:var(--best)}
+.rl-val.worst{color:var(--worst)}
+.rl-diff{font-family:'Share Tech Mono',monospace;font-size:0.82rem;color:#ff9050;margin-top:2px}
+.rl-min{font-family:'Share Tech Mono',monospace;font-size:0.82rem;color:var(--best);margin-top:2px}
+
+/* Info bar */
+#ibar{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  background:rgba(8,13,24,.9);border:1px solid var(--hi);border-radius:16px;
+  padding:5px 18px;z-index:600;pointer-events:none;
+  font-family:'Share Tech Mono',monospace;font-size:0.8rem;color:var(--muted);
+  white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis;
 }
 
-/* ── Modal ── */
-#modal { display:none; position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,.78); align-items:center; justify-content:center }
-#modal.on { display:flex }
-#mbox { background:#0b1220; border:1px solid var(--hi); border-radius:10px; padding:20px; width:min(520px,95vw); max-height:88vh; overflow-y:auto; display:flex; flex-direction:column; gap:12px }
-#mbox h2 { font-size:1.05rem; font-weight:700; color:var(--accent); letter-spacing:.1em }
-.tabs { display:flex; border-bottom:1px solid var(--border) }
-.tab { flex:1; padding:8px 4px; background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; font-family:'Share Tech Mono',monospace; font-size:0.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; transition:all .2s }
-.tab.on { color:var(--accent); border-bottom-color:var(--accent) }
-.pane { display:none }
-.pane.on { display:block }
-#dz { border:2px dashed var(--hi); border-radius:8px; padding:24px 16px; text-align:center; cursor:pointer; margin-bottom:10px }
-#dz:hover,#dz.drag { border-color:var(--accent) }
-#dz p { font-family:'Share Tech Mono',monospace; font-size:0.82rem; color:var(--muted); line-height:1.8 }
-#dz p b { color:var(--accent) }
-#fi { display:none }
-#prev { width:100%; border-radius:4px; margin-bottom:8px; display:none; max-height:160px; object-fit:contain }
-#ta { width:100%; height:200px; background:#060c18; border:1px solid var(--border); border-radius:4px; color:var(--text); font-family:'Share Tech Mono',monospace; font-size:0.74rem; padding:8px; resize:vertical; outline:none; line-height:1.5 }
-#ta:focus { border-color:var(--hi) }
-.hint { font-family:'Share Tech Mono',monospace; font-size:0.72rem; color:var(--muted); margin-bottom:8px; line-height:1.6 }
-#mst { font-family:'Share Tech Mono',monospace; font-size:0.78rem; color:var(--muted); min-height:1.2em }
-.mbtns { display:flex; gap:10px; justify-content:flex-end; margin-top:4px }
-.mb { background:#0f2a45; border:1px solid var(--hi); border-radius:5px; padding:7px 18px; font-family:'Share Tech Mono',monospace; font-size:0.8rem; color:var(--accent); cursor:pointer }
-.mb:hover { background:#142f52 }
-.mb.pri { background:#1a4060; border-color:var(--accent) }
+/* Modal */
+#modal{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.78);align-items:center;justify-content:center}
+#modal.on{display:flex}
+#mbox{background:#0b1220;border:1px solid var(--hi);border-radius:10px;padding:20px;width:min(520px,95vw);max-height:88vh;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+#mbox h2{font-size:1.05rem;font-weight:700;color:var(--accent);letter-spacing:.1em}
+.tabs{display:flex;border-bottom:1px solid var(--border)}
+.tab{flex:1;padding:8px 4px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-family:'Share Tech Mono',monospace;font-size:0.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;transition:all .2s}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.pane{display:none}
+.pane.on{display:block}
+#dz{border:2px dashed var(--hi);border-radius:8px;padding:24px 16px;text-align:center;cursor:pointer;margin-bottom:10px}
+#dz:hover,#dz.drag{border-color:var(--accent)}
+#dz p{font-family:'Share Tech Mono',monospace;font-size:0.82rem;color:var(--muted);line-height:1.8}
+#dz p b{color:var(--accent)}
+#fi{display:none}
+#prev{width:100%;border-radius:4px;margin-bottom:8px;display:none;max-height:160px;object-fit:contain}
+#ta{width:100%;height:200px;background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.74rem;padding:8px;resize:vertical;outline:none;line-height:1.5}
+#ta:focus{border-color:var(--hi)}
+.hint{font-family:'Share Tech Mono',monospace;font-size:0.72rem;color:var(--muted);margin-bottom:8px;line-height:1.6}
+#mst{font-family:'Share Tech Mono',monospace;font-size:0.78rem;color:var(--muted);min-height:1.2em}
+.mbtns{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
+.mb{background:#0f2a45;border:1px solid var(--hi);border-radius:5px;padding:7px 18px;font-family:'Share Tech Mono',monospace;font-size:0.8rem;color:var(--accent);cursor:pointer}
+.mb:hover{background:#142f52}
+.mb.pri{background:#1a4060;border-color:var(--accent)}
 </style>
 </head>
 <body>
-
 <div id="hdr">
   <h1>✈ JL759 &nbsp; NRT → SGN</h1>
   <button id="inp-btn" onclick="openModal()">📋 入力</button>
 </div>
-
 <div id="map">
-  <svg id="label-svg"></svg>
+  <svg id="lsvg"></svg>
   <div id="ibar">ルートをタップして選択</div>
 </div>
 
@@ -156,7 +145,7 @@ html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--text
       </div>
       <input type="file" id="fi" accept="image/*" onchange="onFile(this.files[0])">
       <img id="prev" alt="">
-      <div class="hint">⬆ 画像を選んだ後「テキスト貼付」タブに切り替え、BRICの文字をコピーして貼り付けてください</div>
+      <div class="hint">⬆ 画像を選んだ後「テキスト貼付」タブに切り替えて BRICの文字を貼り付けてください</div>
     </div>
     <div class="pane" id="p-txt">
       <div class="hint">CITYPAIR COMPARISONのテキストをそのまま貼り付けて「解析」</div>
@@ -186,7 +175,7 @@ const FIXED = {
   HCN:[21.9281,120.8440,'VOR','恆春VORTAC'],
   MIA:[14.5080,121.0220,'VOR','Manila VOR-DME'],
   SAMUS:[33.83889,140.21806,'WPT','SAMUS (JP ENR-4.3)'],
-  // Estimated
+  // estimated
   PIGOK:[35.30,139.10,'WPT','PIGOK(推定)'],
   VETOM:[10.90,107.30,'WPT','VETOM(推定)'],
   DOVIN:[11.30,107.80,'WPT','DOVIN(推定)'],
@@ -201,91 +190,107 @@ const FIXED = {
   Q1:   [11.80,108.00,'WPT','Q1(推定)'],
 };
 
-let DB = null;
-function loadDB() {
-  if (DB) return;
-  DB = {};
-  try {
-    const bin = atob(DB_GZ_B64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-    DB = JSON.parse(pako.inflate(bytes, {to:'string'}));
-  } catch(e) { console.warn('DB load:', e); }
+let DB=null;
+function loadDB(){
+  if(DB)return;
+  DB={};
+  try{
+    const bin=atob(DB_GZ_B64),bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    DB=JSON.parse(pako.inflate(bytes,{to:'string'}));
+  }catch(e){console.warn('DB:',e);}
 }
-function lookup(id) {
-  if (FIXED[id]) return FIXED[id];
-  if (!DB) loadDB();
-  return DB[id] || null;
+function lookup(id){
+  if(FIXED[id])return FIXED[id];
+  if(!DB)loadDB();
+  return DB[id]||null;
 }
 
 // ═══════════════════════════════════════════════
 // GEOMETRY
 // ═══════════════════════════════════════════════
-function gcNm(a,b) {
-  const R=6371*0.5400,r=Math.PI/180;
-  const dLat=(b[0]-a[0])*r, dLon=(b[1]-a[1])*r;
+function gcNm(a,b){
+  const R=3440.07,r=Math.PI/180;
+  const dLat=(b[0]-a[0])*r,dLon=(b[1]-a[1])*r;
   const x=Math.sin(dLat/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLon/2)**2;
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 }
-function sanitize(pts) {
-  if (pts.length<=2) return pts;
+
+// Remove only truly implausible points (>900nm hop, OR detour > 3x)
+// Keep generous thresholds so we don't over-drop
+function sanitize(pts){
+  if(pts.length<=2)return pts;
   const out=[pts[0]];
-  for (let i=1;i<pts.length;i++) {
-    const prev=out[out.length-1], cur=pts[i], nxt=pts[i+1];
+  for(let i=1;i<pts.length;i++){
+    const prev=out[out.length-1],cur=pts[i],nxt=pts[i+1];
     const d=gcNm([prev.lat,prev.lon],[cur.lat,cur.lon]);
-    if (d>800) continue;
-    if (nxt) {
+    if(d>900)continue;  // clearly wrong hemisphere or data error
+    if(nxt){
       const skip=gcNm([prev.lat,prev.lon],[nxt.lat,nxt.lon]);
-      if (skip>10 && (d+gcNm([cur.lat,cur.lon],[nxt.lat,nxt.lon]))/skip>2.5) continue;
+      // Only skip if it's a HUGE detour (3x) AND skip distance is meaningful
+      if(skip>20&&(d+gcNm([cur.lat,cur.lon],[nxt.lat,nxt.lon]))/skip>3.0)continue;
     }
     out.push(cur);
   }
   return out;
 }
 
-// ═══════════════════════════════════════════════
-// PARSER  (TRIPF added, LOZ stripped from via)
-// ═══════════════════════════════════════════════
-const AWY_RE = /^[A-Z]\d|^[A-Z]{2}\d/;
-const SKIP = new Set(['DCT','OPTD','DIST','ESAD','MINF','TRIPF','EET','PROFILE','COST',
-  'FUEL','TIME','OVRFLT','TOTAL','RTNG','VIA','ZFW','TCF','JA844J','CRA','JAL00263','JA844','26']);
+function eet(v){const h=Math.floor(v),m=Math.round((v-h)*100);return h+'+'+String(m).padStart(2,'0')}
 
-function parseText(raw) {
+// ═══════════════════════════════════════════════
+// TEXT PARSER
+// Waypoints = exactly 5 uppercase alpha chars
+// (5文字の大文字アルファベットのみ)
+// ═══════════════════════════════════════════════
+// Tokens to always skip (non-waypoint keywords)
+const SKIP=new Set([
+  'DCT','OPTD','DIST','ESAD','MINF','TRIPF','EET','PROFILE','COST',
+  'FUEL','TIME','OVRFLT','TOTAL','RTNG','VIA','ZFW','TCF',
+  'JA844J','JA844','CRA','JAL','DIRECT',
+]);
+// Airway pattern: letter(s) + digit(s) (like Y84, Q15, A590, N89, M765, W15, B591, G221, etc.)
+const AWY_RE=/^[A-Z]{1,3}\d/;
+
+function parseText(raw){
   const COLORS=['#00ddff','#ffaa22','#cc66ff','#33ee88','#ff5566','#ffdd44','#ff8844'];
-  const DASHES=[null,'8,4','11,4','5,3','6,3','9,5',null];
+  const DASHES=[null,'10,5','14,5','6,4','8,4','10,4',null];
   const blocks=raw.split(/(?=VRNT\s+\d)/);
   const routes=[];
-  for (const blk of blocks) {
-    if (!/VRNT\s+\d/.test(blk)) continue;
-    const idM=blk.match(/VRNT\s+(\d+)/); if (!idM) continue;
+  for(const blk of blocks){
+    if(!/VRNT\s+\d/.test(blk))continue;
+    const idM=blk.match(/VRNT\s+(\d+)/);if(!idM)continue;
     const id=parseInt(idM[1]);
-    // via: strip "LOZ-" or "LOZ " prefix
+    // via: strip LOZ- prefix, take the actual route name after it
     const viaM=blk.match(/VIA\s+([\w\-\/]+)/);
     const via=(viaM?viaM[1]:'').replace(/^LOZ[-\s]*/i,'').trim();
     const num=tag=>{const m=blk.match(new RegExp(tag+'\\s+(\\d+)'));return m?parseInt(m[1]):0;};
     const numF=tag=>{const m=blk.match(new RegExp(tag+'\\s+([\\d.]+)'));return m?parseFloat(m[1]):0;};
-    // OPTD waypoints
-    const lines=blk.split('\n'); let inO=false,optL=[];
-    for (const ln of lines) {
-      if (/OPTD/.test(ln)) inO=true;
-      if (inO) {
-        if (/^\s*(DIST|PROFILE|COST|MINF)/.test(ln)){inO=false;break;}
+    // OPTD lines
+    const lines=blk.split('\n');let inO=false,optL=[];
+    for(const ln of lines){
+      if(/OPTD/.test(ln))inO=true;
+      if(inO){
+        if(/^\s*(DIST|PROFILE|COST|MINF)/.test(ln)){inO=false;break;}
         optL.push(ln);
       }
     }
-    const toks=optL.join(' ').split(/[\s\/\(\),]+/).map(t=>t.toUpperCase().replace(/[^A-Z0-9]/g,'')).filter(t=>t.length>=2&&t.length<=6);
+    const raw2=optL.join(' ');
+    // Tokenize: split on whitespace/slashes/parens
+    const toks=raw2.split(/[\s\/\(\),\[\]]+/)
+      .map(t=>t.replace(/[^A-Z]/gi,'').toUpperCase())
+      .filter(t=>t.length===5);  // EXACTLY 5 uppercase alpha = waypoint
     const wps=[];
-    for (const t of toks) {
-      if (!t||SKIP.has(t)) continue;
-      if (AWY_RE.test(t)) continue;
-      if (/^\d/.test(t)) continue;
-      if (/^[A-Z]+$/.test(t)) wps.push(t);
+    for(const t of toks){
+      if(SKIP.has(t))continue;
+      if(AWY_RE.test(t))continue;  // airway
+      if(!/^[A-Z]{5}$/.test(t))continue;  // must be pure alpha, 5 chars
+      wps.push(t);
     }
     const i=routes.length;
     routes.push({
-      id, label:'VRNT '+id, via,
-      color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
-      tripf:num('TRIPF'), time:numF('EET'),
+      id,label:'VRNT '+id,via,
+      color:COLORS[i%COLORS.length],dash:DASHES[i%DASHES.length],
+      tripf:num('TRIPF'),time:numF('EET'),
       rawWps:['NRT',...wps.filter(w=>w!=='NRT'&&w!=='SGN'),'SGN']
     });
   }
@@ -293,130 +298,162 @@ function parseText(raw) {
   return routes;
 }
 
-function eet(v){const h=Math.floor(v),m=Math.round((v-h)*100);return h+'+'+String(m).padStart(2,'0')}
-
 // ═══════════════════════════════════════════════
-// MAP + LABELS
+// MAP
 // ═══════════════════════════════════════════════
 const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionControl:false});
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:14}).addTo(map);
 
-let ROUTES=[], polys={}, hidden=new Set(), selId=null;
-let labelEls={};  // route id -> DOM element
+let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
 
 function resolveRoute(r){
-  const pts=r.rawWps.map(n=>{const d=lookup(n);if(!d)return null;return{lat:d[0],lon:d[1],type:d[2],name:n,est:!!(d[3]&&d[3].includes('推定'))};}).filter(Boolean);
+  const pts=r.rawWps.map(n=>{
+    const d=lookup(n);if(!d)return null;
+    return{lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};
+  }).filter(Boolean);
   return sanitize(pts);
 }
 
 function clearAll(){
-  Object.values(polys).forEach(p=>map.removeLayer(p)); polys={};
+  Object.values(polys).forEach(p=>map.removeLayer(p));polys={};
   map.eachLayer(l=>{if(l instanceof L.CircleMarker)map.removeLayer(l);});
-  Object.values(labelEls).forEach(el=>el.remove()); labelEls={};
-  document.getElementById('label-svg').innerHTML='';
+  Object.values(labelEls).forEach(el=>el.remove());labelEls={};
+  document.getElementById('lsvg').innerHTML='';
 }
 
-// Find a point ~40% along the polyline to anchor the label
+// Point ~40% along route
 function midPt(pts){
-  if(!pts||!pts.length) return null;
-  let totalD=0;
-  for(let i=1;i<pts.length;i++) totalD+=gcNm([pts[i-1].lat,pts[i-1].lon],[pts[i].lat,pts[i].lon]);
-  let target=totalD*0.42, d=0;
+  if(!pts||!pts.length)return null;
+  let tot=0;
+  for(let i=1;i<pts.length;i++)tot+=gcNm([pts[i-1].lat,pts[i-1].lon],[pts[i].lat,pts[i].lon]);
+  let target=tot*0.42,d=0;
   for(let i=1;i<pts.length;i++){
     const seg=gcNm([pts[i-1].lat,pts[i-1].lon],[pts[i].lat,pts[i].lon]);
     if(d+seg>=target){
       const f=(target-d)/seg;
-      return {lat:pts[i-1].lat+(pts[i].lat-pts[i-1].lat)*f,
-              lon:pts[i-1].lon+(pts[i].lon-pts[i-1].lon)*f};
+      return{lat:pts[i-1].lat+(pts[i].lat-pts[i-1].lat)*f,
+             lon:pts[i-1].lon+(pts[i].lon-pts[i-1].lon)*f};
     }
     d+=seg;
   }
   return pts[Math.floor(pts.length/2)];
 }
 
+// ── Overlap resolution ──────────────────────────
+// Place labels using a greedy repulsion algorithm
+// so they don't overlap each other
+const LW=164, LH=108;  // label width/height (approx)
+const MARGIN=8;
+
+function rectOverlap(a,b){
+  return!(a.x+LW+MARGIN<b.x||b.x+LW+MARGIN<a.x||a.y+LH+MARGIN<b.y||b.y+LH+MARGIN<a.y);
+}
+
+function resolveOverlaps(positions, svgW, svgH){
+  // positions: [{id, x, y}]
+  // Iterate up to 60 passes of repulsion
+  const PAD=MARGIN+4;
+  for(let pass=0;pass<60;pass++){
+    let moved=false;
+    for(let i=0;i<positions.length;i++){
+      for(let j=i+1;j<positions.length;j++){
+        const a=positions[i],b=positions[j];
+        if(!rectOverlap(a,b))continue;
+        // Push apart
+        const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;
+        const dx=a.x-cx,dy=a.y-cy;
+        const len=Math.sqrt(dx*dx+dy*dy)||1;
+        const push=(LW/2+PAD)/len;
+        a.x+=dx*push*0.5; a.y+=dy*push*0.5;
+        b.x-=dx*push*0.5; b.y-=dy*push*0.5;
+        moved=true;
+      }
+    }
+    if(!moved)break;
+  }
+  // Clamp to map
+  for(const p of positions){
+    p.x=Math.max(MARGIN,Math.min(svgW-LW-MARGIN,p.x));
+    p.y=Math.max(MARGIN+12,Math.min(svgH-LH-MARGIN,p.y));
+  }
+}
+
 function placeLabels(){
-  // Remove existing labels and SVG lines
-  Object.values(labelEls).forEach(el=>el.remove()); labelEls={};
-  document.getElementById('label-svg').innerHTML='';
+  Object.values(labelEls).forEach(el=>el.remove());labelEls={};
+  const svg=document.getElementById('lsvg');
+  svg.innerHTML='';
+
+  const mapEl=document.getElementById('map');
+  const svgW=mapEl.offsetWidth,svgH=mapEl.offsetHeight;
+  svg.setAttribute('viewBox',`0 0 ${svgW} ${svgH}`);
+
+  if(!ROUTES.length)return;
 
   const minTripf=Math.min(...ROUTES.filter(r=>!hidden.has(r.id)&&r.tripf>0).map(r=>r.tripf));
   const minTime=Math.min(...ROUTES.filter(r=>!hidden.has(r.id)).map(r=>r.time));
   const maxTime=Math.max(...ROUTES.filter(r=>!hidden.has(r.id)).map(r=>r.time));
 
-  const mapEl=document.getElementById('map');
-  const svg=document.getElementById('label-svg');
-  const svgW=mapEl.offsetWidth, svgH=mapEl.offsetHeight;
-  svg.setAttribute('viewBox',`0 0 ${svgW} ${svgH}`);
-
+  // Collect anchor points and initial label positions
+  const items=[];
   ROUTES.forEach(r=>{
-    if(hidden.has(r.id)) return;
-    const pts=r._pts; if(!pts||!pts.length) return;
-
-    // Anchor point on line
-    const anchor=midPt(pts);
-    if(!anchor) return;
+    if(hidden.has(r.id))return;
+    const pts=r._pts;if(!pts||!pts.length)return;
+    const anchor=midPt(pts);if(!anchor)return;
     const ap=map.latLngToContainerPoint([anchor.lat,anchor.lon]);
+    // Spread initial offsets: rotate around anchor per index
+    const angle=(r.id*137.5)*(Math.PI/180);  // golden angle spread
+    const dist=100+r.id*10;
+    items.push({
+      r,
+      ap,
+      x:ap.x+Math.cos(angle)*dist-LW/2,
+      y:ap.y+Math.sin(angle)*dist-LH/2,
+    });
+  });
 
-    // Create label element
+  resolveOverlaps(items,svgW,svgH);
+
+  items.forEach(item=>{
+    const {r,ap}=item;
+    const lx=item.x,ly=item.y;
+
+    // Leader line
+    const lcx=lx+LW/2,lcy=ly+LH/2;
+    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',lcx);line.setAttribute('y1',lcy);
+    line.setAttribute('x2',ap.x);line.setAttribute('y2',ap.y);
+    line.setAttribute('stroke',r.color);line.setAttribute('stroke-width','1.8');
+    line.setAttribute('stroke-dasharray','6,4');line.setAttribute('opacity','0.65');
+    svg.appendChild(line);
+
+    // Anchor dot
+    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('cx',ap.x);dot.setAttribute('cy',ap.y);
+    dot.setAttribute('r','5');dot.setAttribute('fill',r.color);dot.setAttribute('opacity','0.85');
+    svg.appendChild(dot);
+
+    // Label box
     const el=document.createElement('div');
-    el.className='rl'+(selId===r.id?' sel':'');
+    el.className='rl'+(selId===r.id?' sel':'')+(hidden.has(r.id)?' off':'');
     el.id='lbl'+r.id;
     el.style.borderColor=r.color;
+    el.style.left=lx+'px';el.style.top=ly+'px';
 
-    const diff=r.tripf>0&&r.tripf>minTripf ? '+'+Math.round(r.tripf-minTripf).toLocaleString()+' lbs' : '★ MIN';
-    const tB=r.time===minTime, tW=r.time===maxTime;
+    const isMin=r.tripf>0&&r.tripf===minTripf;
+    const diff=!isMin&&r.tripf>0?'+'+Math.round(r.tripf-minTripf).toLocaleString()+' lbs':null;
+    const tB=r.time===minTime,tW=r.time===maxTime;
 
     el.innerHTML=
       '<div class="rl-vrnt" style="color:'+r.color+'">'+r.label+'</div>'+
       '<div class="rl-via">'+r.via+'</div>'+
-      '<div class="rl-row">'+
-        '<span class="rl-key">TRIPF</span>'+
-        '<span class="rl-val">'+r.tripf.toLocaleString()+'</span>'+
-      '</div>'+
-      '<div class="rl-row">'+
-        '<span class="rl-diff">'+diff+'</span>'+
-      '</div>'+
-      '<div class="rl-row">'+
-        '<span class="rl-key">EET</span>'+
-        '<span class="rl-val '+(tB?'best':tW?'worst':'')+'">'+eet(r.time)+'</span>'+
-      '</div>';
+      '<div class="rl-sep"></div>'+
+      '<div class="rl-row"><span class="rl-key">TRIPF</span><span class="rl-val">'+r.tripf.toLocaleString()+'</span></div>'+
+      (isMin?'<div class="rl-min">★ MINIMUM</div>':(diff?'<div class="rl-diff">'+diff+'</div>':''))+
+      '<div class="rl-row"><span class="rl-key">EET</span><span class="rl-val '+(tB?'best':tW?'worst':'')+'">'+eet(r.time)+'</span></div>';
 
     el.addEventListener('click',()=>selRoute(r.id));
-
-    // Position: offset the label to avoid overlap
-    // Use a deterministic offset pattern per route
-    const offsets=[
-      {dx:60,  dy:-80 },
-      {dx:70,  dy: 30 },
-      {dx:-180,dy:-90 },
-      {dx:-190,dy: 40 },
-      {dx: 50, dy: 90 },
-    ];
-    const off=offsets[r.id%offsets.length]||{dx:60,dy:-60};
-    let lx=ap.x+off.dx, ly=ap.y+off.dy;
-    // Clamp to map bounds with margin
-    const margin=10, w=140, h=90;
-    lx=Math.max(margin, Math.min(svgW-w-margin, lx));
-    ly=Math.max(margin+10, Math.min(svgH-h-margin, ly));
-
-    el.style.left=lx+'px'; el.style.top=ly+'px';
     mapEl.appendChild(el);
     labelEls[r.id]=el;
-
-    // Draw leader line from label center to anchor point
-    const lCx=lx+70, lCy=ly+45; // approx center of label
-    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
-    line.setAttribute('x1',lCx); line.setAttribute('y1',lCy);
-    line.setAttribute('x2',ap.x); line.setAttribute('y2',ap.y);
-    line.setAttribute('stroke',r.color); line.setAttribute('stroke-width','2');
-    line.setAttribute('stroke-dasharray','6,4'); line.setAttribute('opacity','0.7');
-    svg.appendChild(line);
-
-    // Dot at anchor
-    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    dot.setAttribute('cx',ap.x); dot.setAttribute('cy',ap.y);
-    dot.setAttribute('r','5'); dot.setAttribute('fill',r.color); dot.setAttribute('opacity','0.85');
-    svg.appendChild(dot);
   });
 }
 
@@ -426,23 +463,26 @@ function render(){
   const drawn=new Set();
 
   ROUTES.forEach(r=>{
-    const pts=resolveRoute(r); r._pts=pts;
-    if(!pts.length) return;
+    const pts=resolveRoute(r);r._pts=pts;
+    if(!pts.length)return;
 
     const poly=L.polyline(pts.map(p=>[p.lat,p.lon]),{
-      color:r.color, weight:5, opacity:0.9,
-      dashArray:r.dash, lineJoin:'round', lineCap:'round'
+      color:r.color,
+      weight:5,          // non-selected: 5px (太め)
+      opacity:0.75,
+      dashArray:r.dash,
+      lineJoin:'round',lineCap:'round'
     }).addTo(map);
     poly.on('click',()=>selRoute(r.id));
     polys[r.id]=poly;
 
     pts.forEach(p=>{
-      if(drawn.has(p.name)) return; drawn.add(p.name);
-      const isA=p.type==='APT', isV=p.type==='VOR';
-      const col=p.est?'#778':isV?'#ffd860':isA?'#80d8ff':'#5599cc';
+      if(drawn.has(p.name))return;drawn.add(p.name);
+      const isA=p.type==='APT',isV=p.type==='VOR';
+      const col=p.est?'#667':isV?'#ffd860':isA?'#80d8ff':'#5599cc';
       L.circleMarker([p.lat,p.lon],{
-        radius:isA?9:isV?6:4, color:col,
-        fillColor:isA?'#1a4060':'#0a1420', fillOpacity:.9, weight:isA?2.5:1.5
+        radius:isA?9:isV?6:4,color:col,
+        fillColor:isA?'#1a4060':'#0a1420',fillOpacity:.9,weight:isA?2.5:1.5
       }).addTo(map).bindPopup(
         '<div class="pn">'+p.name+'</div>'+
         '<div class="ps">'+p.type+(p.est?' 推定':'')+'</div>'+
@@ -452,32 +492,29 @@ function render(){
     });
   });
 
-  // Redraw labels whenever map moves/zooms
   placeLabels();
-  map.on('moveend zoomend resize', placeLabels);
-
-  setTimeout(()=>selRoute(ROUTES[0]?.id), 150);
+  map.off('moveend zoomend resize');
+  map.on('moveend zoomend resize',placeLabels);
+  setTimeout(()=>selRoute(ROUTES[0]?.id),150);
 }
 
 function selRoute(id){
-  if(!id) return; selId=id;
-  const r=ROUTES.find(x=>x.id===id); if(!r) return;
+  if(!id)return;selId=id;
+  const r=ROUTES.find(x=>x.id===id);if(!r)return;
 
   ROUTES.forEach(x=>{
-    if(!polys[x.id]||hidden.has(x.id)) return;
+    if(!polys[x.id]||hidden.has(x.id))return;
     polys[x.id].setStyle(x.id===id
-      ? {opacity:1.0, weight:6}
-      : {opacity:0.22, weight:3});
+      ?{opacity:1.0,weight:7}   // selected: 7px
+      :{opacity:0.55,weight:4}  // others: 4px (still visible)
+    );
   });
 
-  // Update label highlights
   Object.entries(labelEls).forEach(([rid,el])=>{
-    el.classList.toggle('sel', parseInt(rid)===id);
-    el.classList.toggle('off', hidden.has(parseInt(rid)));
+    el.classList.toggle('sel',parseInt(rid)===id);
   });
 
-  if(polys[id]) map.fitBounds(polys[id].getBounds(),{padding:[40,40]});
-
+  if(polys[id])map.fitBounds(polys[id].getBounds(),{padding:[50,50]});
   document.getElementById('ibar').textContent=
     r.label+' · '+r.via+' · TRIPF '+r.tripf.toLocaleString()+' / EET '+eet(r.time);
 }
@@ -486,13 +523,13 @@ function togRoute(id){
   const el=labelEls[id];
   if(hidden.has(id)){
     hidden.delete(id);
-    if(polys[id]) polys[id].addTo(map);
+    if(polys[id])polys[id].addTo(map);
     el&&el.classList.remove('off');
-  } else {
+  }else{
     hidden.add(id);
-    if(polys[id]) map.removeLayer(polys[id]);
+    if(polys[id])map.removeLayer(polys[id]);
     el&&el.classList.add('off');
-    if(selId===id) selId=null;
+    if(selId===id)selId=null;
   }
   placeLabels();
 }
@@ -506,9 +543,10 @@ function stab(t){['img','txt'].forEach(x=>{document.getElementById('t-'+x).class
 function onDrop(ev){ev.preventDefault();ev.stopPropagation();document.getElementById('dz').classList.remove('drag');const f=ev.dataTransfer.files[0];if(f)onFile(f);}
 function onFile(f){
   if(!f||!f.type.startsWith('image/'))return;
-  const r=new FileReader();
-  r.onload=e=>{const p=document.getElementById('prev');p.src=e.target.result;p.style.display='block';document.getElementById('mst').textContent='画像を読み込みました。テキストタブに切り替えてBRICの文字を貼り付けてください。';stab('txt');};
-  r.readAsDataURL(f);
+  const rd=new FileReader();
+  rd.onload=e=>{const p=document.getElementById('prev');p.src=e.target.result;p.style.display='block';
+    document.getElementById('mst').textContent='画像を読み込みました。テキストタブに切り替えてBRICの文字を貼り付けてください。';stab('txt');};
+  rd.readAsDataURL(f);
 }
 function doParse(){
   const raw=document.getElementById('ta').value.trim();
@@ -516,12 +554,12 @@ function doParse(){
   if(!raw){st.textContent='⚠ テキストを貼り付けてください';return;}
   const routes=parseText(raw);
   if(!routes.length){st.textContent='❌ VRNTブロックが見つかりませんでした';return;}
-  ROUTES=routes; hidden.clear(); selId=null;
-  closeModal(); render();
+  ROUTES=routes;hidden.clear();selId=null;
+  closeModal();render();
 }
 
 // ═══════════════════════════════════════════════
-// DEFAULT DATA (IMG_1373.jpeg)
+// DEFAULT (IMG_1373.jpeg から / TRIPFはページから読んだ実値)
 // ═══════════════════════════════════════════════
 ROUTES=[
   {id:1,label:'VRNT 1',via:'Y52N89Q15',color:'#00ddff',dash:null,
@@ -542,7 +580,7 @@ ROUTES=[
 ];
 
 render();
-if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script>
 </body>
 </html>
