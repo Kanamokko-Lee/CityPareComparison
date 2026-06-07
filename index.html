@@ -239,17 +239,19 @@ function eet(v){const h=Math.floor(v),m=Math.round((v-h)*100);return h+'+'+Strin
 
 // ═══════════════════════════════════════════════
 // TEXT PARSER
-// Waypoints = exactly 5 uppercase alpha chars
-// (5文字の大文字アルファベットのみ)
+// ウェイポイント = 純粋アルファベット 3文字(VOR) または 5文字
+// LOZ および下記キーワードは除外
 // ═══════════════════════════════════════════════
-// Tokens to always skip (non-waypoint keywords)
 const SKIP=new Set([
   'DCT','OPTD','DIST','ESAD','MINF','TRIPF','EET','PROFILE','COST',
   'FUEL','TIME','OVRFLT','TOTAL','RTNG','VIA','ZFW','TCF',
-  'JA844J','JA844','CRA','JAL','DIRECT',
+  'JA844J','JA844','JAL','DIRECT',
+  'LOZ',  // ルート記述の一部、ウェイポイントではない
+  // 3文字だがウェイポイントでない語
+  'DCT','THE','AND','FOR','NOT','ALL',
 ]);
-// Airway pattern: letter(s) + digit(s) (like Y84, Q15, A590, N89, M765, W15, B591, G221, etc.)
-const AWY_RE=/^[A-Z]{1,3}\d/;
+// 航路名パターン: アルファベット + 数字を含む (Y84, Q15, A590, N89, M765, W15, B591, G221 等)
+const AWY_RE=/^[A-Z]{1,3}\d|^\d/;
 
 function parseText(raw){
   const COLORS=['#00ddff','#ffaa22','#cc66ff','#33ee88','#ff5566','#ffdd44','#ff8844'];
@@ -260,12 +262,12 @@ function parseText(raw){
     if(!/VRNT\s+\d/.test(blk))continue;
     const idM=blk.match(/VRNT\s+(\d+)/);if(!idM)continue;
     const id=parseInt(idM[1]);
-    // via: strip LOZ- prefix, take the actual route name after it
+    // via: LOZ- または LOZ  プレフィックスを除去して実際のルート名を取得
     const viaM=blk.match(/VIA\s+([\w\-\/]+)/);
     const via=(viaM?viaM[1]:'').replace(/^LOZ[-\s]*/i,'').trim();
     const num=tag=>{const m=blk.match(new RegExp(tag+'\\s+(\\d+)'));return m?parseInt(m[1]):0;};
     const numF=tag=>{const m=blk.match(new RegExp(tag+'\\s+([\\d.]+)'));return m?parseFloat(m[1]):0;};
-    // OPTD lines
+    // OPTD 行を収集
     const lines=blk.split('\n');let inO=false,optL=[];
     for(const ln of lines){
       if(/OPTD/.test(ln))inO=true;
@@ -275,15 +277,16 @@ function parseText(raw){
       }
     }
     const raw2=optL.join(' ');
-    // Tokenize: split on whitespace/slashes/parens
+    // トークン化: 空白・スラッシュ・括弧等で分割
     const toks=raw2.split(/[\s\/\(\),\[\]]+/)
-      .map(t=>t.replace(/[^A-Z]/gi,'').toUpperCase())
-      .filter(t=>t.length===5);  // EXACTLY 5 uppercase alpha = waypoint
+      .map(t=>t.replace(/[^A-Za-z]/g,'').toUpperCase())
+      .filter(t=>t.length===3||t.length===5);  // 3文字(VOR) or 5文字(WPT)
     const wps=[];
     for(const t of toks){
-      if(SKIP.has(t))continue;
-      if(AWY_RE.test(t))continue;  // airway
-      if(!/^[A-Z]{5}$/.test(t))continue;  // must be pure alpha, 5 chars
+      if(!t)continue;
+      if(SKIP.has(t))continue;          // 除外キーワード
+      if(AWY_RE.test(t))continue;       // 航路名（数字含む）
+      if(!/^[A-Z]+$/.test(t))continue;  // 純粋アルファベットのみ
       wps.push(t);
     }
     const i=routes.length;
