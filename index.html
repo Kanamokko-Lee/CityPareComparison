@@ -87,7 +87,8 @@ textarea:focus{border-color:var(--hi)}
 .mb:hover{background:#142f52}
 .mb.pri{background:#1a4060;border-color:var(--accent)}
 .mb:disabled{opacity:.35;cursor:default}
-/* Settings modal */
+/* Section label */
+.sect-label{font-family:'Share Tech Mono',monospace;font-size:0.68rem;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin-bottom:5px;margin-top:4px}
 .setting-row{display:flex;flex-direction:column;gap:4px;padding:10px 0;border-bottom:1px solid var(--border)}
 .setting-row:last-child{border-bottom:none}
 .setting-label{font-size:0.82rem;font-weight:700;color:var(--text)}
@@ -109,29 +110,24 @@ textarea:focus{border-color:var(--hi)}
 <div class="modal" id="m-main">
   <div class="mbox">
     <h2>📋 CITYPAIR COMPARISON 入力</h2>
-    <div class="tabs">
-      <button class="tab on" id="t-img" onclick="stab('img')">📷 画像</button>
-      <button class="tab" id="t-txt" onclick="stab('txt')">📝 テキスト</button>
+
+    <!-- 画像エリア（常に表示） -->
+    <div class="sect-label">📷 画像（どちらか一方を使用）</div>
+    <div id="dz" onclick="document.getElementById('fi').click()"
+         ondragover="event.preventDefault();this.classList.add('drag')"
+         ondragleave="this.classList.remove('drag')"
+         ondrop="onDrop(event)">
+      <p><b>タップして画像を選択</b><br>または画像をここにドロップ</p>
     </div>
-    <!-- IMAGE -->
-    <div class="pane on" id="p-img">
-      <div id="dz" onclick="document.getElementById('fi').click()"
-           ondragover="event.preventDefault();this.classList.add('drag')"
-           ondragleave="this.classList.remove('drag')"
-           ondrop="onDrop(event)">
-        <p><b>タップして画像を選択</b><br>または画像をここにドロップ</p>
-      </div>
-      <input type="file" id="fi" accept="image/*" onchange="onFile(this.files[0])">
-      <div id="prev-wrap"><img id="prev" alt=""><button id="prev-clear" onclick="clearImg()">✕</button></div>
-      <div class="hint">BRICのスクリーンショットを選択してください</div>
-    </div>
-    <!-- TEXT -->
-    <div class="pane" id="p-txt">
-      <div class="hint">CITYPAIR COMPARISONのテキストをそのまま貼り付け</div>
-      <textarea id="ta" rows="8" placeholder="VRNT 1 RTNG 01R VIA LOZ-Y52N89Q15...
+    <input type="file" id="fi" accept="image/*" onchange="onFile(this.files[0])">
+    <div id="prev-wrap"><img id="prev" alt=""><button id="prev-clear" onclick="clearImg()">✕ クリア</button></div>
+
+    <!-- テキストエリア（常に表示） -->
+    <div class="sect-label">📝 テキスト貼付（どちらか一方を使用）</div>
+    <textarea id="ta" rows="7" placeholder="VRNT 1 RTNG 01R VIA LOZ-Y52N89Q15...
 0 OPTD /F400 DCT SAMUS Y84 HCE...
 TRIPF 56460  EET  5.41"></textarea>
-    </div>
+
     <div class="prog-wrap" id="prog-wrap"><div class="prog-bar" id="prog-bar"></div></div>
     <div class="mst" id="mst"></div>
     <div class="mbtns">
@@ -491,7 +487,7 @@ function selRoute(id){
 // ═══════════════════════════════════════════════
 // MAIN MODAL
 // ═══════════════════════════════════════════════
-let imgB64=null,imgMime='image/jpeg',activeTab='img';
+let imgB64=null,imgMime='image/jpeg';
 
 function openMain(){document.getElementById('m-main').classList.add('on');setSt('');}
 function closeMain(){document.getElementById('m-main').classList.remove('on');}
@@ -500,17 +496,10 @@ function setProg(pct){
   document.getElementById('prog-wrap').style.display=pct>0?'block':'none';
   document.getElementById('prog-bar').style.width=pct+'%';
 }
-function stab(t){
-  activeTab=t;
-  ['img','txt'].forEach(x=>{
-    document.getElementById('t-'+x).classList.toggle('on',x===t);
-    document.getElementById('p-'+x).classList.toggle('on',x===t);
-  });
-  document.getElementById('go-btn').disabled=(t==='img'&&!imgB64)||(t==='txt'&&!document.getElementById('ta').value.trim());
+function checkGoBtn(){
+  document.getElementById('go-btn').disabled=(!imgB64&&!document.getElementById('ta').value.trim());
 }
-document.getElementById('ta').addEventListener('input',function(){
-  if(activeTab==='txt')document.getElementById('go-btn').disabled=!this.value.trim();
-});
+document.getElementById('ta').addEventListener('input',checkGoBtn);
 function onDrop(ev){ev.preventDefault();ev.stopPropagation();document.getElementById('dz').classList.remove('drag');const f=ev.dataTransfer.files[0];if(f)onFile(f);}
 function onFile(f){
   if(!f||!f.type.startsWith('image/'))return;
@@ -521,8 +510,8 @@ function onFile(f){
     document.getElementById('prev').src=e.target.result;
     document.getElementById('prev-wrap').style.display='block';
     document.getElementById('dz').style.display='none';
-    document.getElementById('go-btn').disabled=false;
     setSt('画像を読み込みました。「解析して表示」を押してください。');
+    checkGoBtn();
   };
   rd.readAsDataURL(f);
 }
@@ -530,8 +519,7 @@ function clearImg(){
   imgB64=null;
   document.getElementById('prev-wrap').style.display='none';
   document.getElementById('dz').style.display='block';
-  document.getElementById('go-btn').disabled=true;
-  setSt('');setProg(0);
+  setSt('');setProg(0);checkGoBtn();
 }
 
 async function doGo(){
@@ -539,23 +527,34 @@ async function doGo(){
   btn.disabled=true;setProg(5);setSt('解析中...');
   try{
     let rawText='';
-    if(activeTab==='img'){
-      // OCR via Anthropic API (if available) or ask user to switch to text
+    const taVal=document.getElementById('ta').value.trim();
+
+    if(imgB64){
+      // 画像優先: OCR試行
       setProg(10);setSt('画像からテキストを読み取り中...');
       rawText=await ocrImage(imgB64,imgMime);
-      if(!rawText)throw new Error('テキストの読み取りに失敗しました。「テキスト」タブに切り替えて貼り付けてください。');
+      if(!rawText){
+        // OCR失敗 → テキストエリアにフォールバック
+        if(taVal){
+          rawText=taVal;
+          setSt('画像OCRは利用不可。テキストで解析します。');
+        } else {
+          throw new Error('画像OCRに失敗しました。テキスト欄にBRICのテキストを貼り付けてください。');
+        }
+      }
+    } else if(taVal){
+      rawText=taVal;
     } else {
-      rawText=document.getElementById('ta').value.trim();
+      throw new Error('画像またはテキストを入力してください');
     }
+
     setProg(20);setSt('ルートを解析中...');
     const routes=parseRoutes(rawText);
     if(!routes.length)throw new Error('VRNTブロックが見つかりませんでした');
 
-    // Try FPD API for each route
     const apiKey=getApiKey();
     if(apiKey){
       setProg(25);setSt('FlightPlanDatabase APIでルートを展開中...');
-      let ok=true;
       for(let i=0;i<routes.length;i++){
         const r=routes[i];
         const pct=25+Math.round((i/routes.length)*65);
