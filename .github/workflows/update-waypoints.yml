@@ -1,1 +1,38 @@
-naiyo
+name: Update Waypoints DB
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 1 * *'
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch waypoints from FlightPlanDatabase
+        env:
+          FPD_API_KEY: ${{ secrets.FPD_API_KEY }}
+        run: python fetch_waypoints.py
+
+      - name: Commit nav_extra.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add nav_extra.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update waypoints DB $(date +%Y-%m-%d)"
+            git push
+          fi
