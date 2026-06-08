@@ -159,6 +159,7 @@
                 tr.innerHTML = `<td><input type="checkbox" checked onchange="toggleRoute(${index}, this.checked)"></td><td><span class="color-box" style="background-color: ${color}"></span> <b>${routeName}</b></td><td>${tripf}</td><td>${eet}</td>`;
                 legendBody.appendChild(tr);
             });
+            
 
             if (routeLayers.length > 0) {
                 const group = new L.FeatureGroup(routeLayers);
