@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flight Route Visualizer (Stable)</title>
+    <title>Flight Route Visualizer (External DB)</title>
     <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22Flight%20Route%20Visualizer%22,%22short_name%22:%22RouteVis%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%231a1a1a%22,%22theme_color%22:%22%232c3e50%22}">
     <meta name="theme-color" content="#2c3e50">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -37,10 +37,10 @@
         </div>
         <div class="input-group">
             <label>2. テキストデータ</label>
-            <textarea id="textInput" placeholder="ここにテキストをペーストするか、画像をアップロードしてください"></textarea>
+            <textarea id="textInput" placeholder="テキストをペーストするか画像をアップロード"></textarea>
         </div>
         <button id="processBtn">ルートをプロット</button>
-        <div id="status"></div>
+        <div id="status">外部データベースを読み込み中...</div>
 
         <div>
             <h2>ルート凡例 (Legend)</h2>
@@ -56,25 +56,28 @@
     <div id="map"></div>
 
     <script>
-        // --- 1. AIPデータ等に基づく確定国内・近海フィックスデータベース（完全内包） ---
-        const MASTER_FIX_DB = {
-            "NRT": [35.7767, 140.3864], "SGN": [10.8188, 106.6519],
-            "SAMUS": [34.7833, 137.9500], "PIGOK": [34.2000, 137.1000],
-            "HCE": [33.5833, 135.9167], "BUBDO": [32.0000, 136.0000],
-            "IGMON": [31.5000, 133.0000], "IGURU": [27.0000, 127.5000],
-            "YULIA": [28.5000, 129.5000], "TONAR": [25.0000, 125.0000],
-            "DRAKE": [30.1217, 130.8517], "TINHO": [23.4167, 119.8250],
-            "KAPLI": [18.2533, 113.6217], "MADRU": [15.4200, 111.9017],
-            "SULUX": [13.8417, 110.4500], "IGLEG": [13.2550, 109.9117],
-            "IKELA": [12.9833, 109.6167], "BUNTA": [12.6167, 109.3500],
-            "DOVIN": [11.0167, 107.4167], "MIA": [18.0000, 115.0000],
-            "PANDI": [14.0000, 111.0000], "SOSPA": [12.5000, 109.5000],
-            "VETOM": [11.5000, 108.2000], "PCA": [9.9211, 105.8119],
-            "BMT": [10.3183, 107.0375], "HCN": [10.2281, 105.2044]
-        };
-
+        let NAV_DB = {}; // JSONから読み込まれるマスターデータベース
         const ROUTE_COLORS = ['#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c'];
         let map, routeLayers = [];
+
+        // 起動時に外部JSONデータベースをロード
+        async function loadNavigationDatabase() {
+            const statusDiv = document.getElementById('status');
+            try {
+                const response = await fetch('./navdata.json');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+                NAV_DB = data.POINTS;
+                statusDiv.innerText = `データベース読込完了 (AIRAC: ${data.AIP_VERSION || 'Unknown'})`;
+                
+                // 地図上にデフォルトの出発・目的地ピンを設定
+                if(NAV_DB.NRT) L.marker(NAV_DB.NRT).addTo(map).bindPopup("成田国際空港 (NRT)");
+                if(NAV_DB.SGN) L.marker(NAV_DB.SGN).addTo(map).bindPopup("タンソンニャット国際空港 (SGN)");
+            } catch (err) {
+                console.error(err);
+                statusDiv.innerText = "データベースの読み込みに失敗しました(オフライン時は初回起動が必要)";
+            }
+        }
 
         function initMap() {
             map = L.map('map', { center: [22.0, 122.0], zoom: 5 });
@@ -82,48 +85,24 @@
                 attribution: '&copy; OpenStreetMap &copy; CARTO'
             }).addTo(map);
 
-            L.marker(MASTER_FIX_DB.NRT).addTo(map).bindPopup("成田国際空港 (NRT)");
-            L.marker(MASTER_FIX_DB.SGN).addTo(map).bindPopup("タンソンニャット国際空港 (SGN)");
+            loadNavigationDatabase();
         }
 
-        // --- 2. 米政府（NOAA）の公式Aviation WeatherパブリックAPIを利用したフォールバック検索 ---
-        async function getCoordinates(pointName) {
-            // 内包データベースにある場合は一瞬で返す（オフライン対応）
-            if (MASTER_FIX_DB[pointName]) return MASTER_FIX_DB[pointName];
-
-            // ない場合はパブリックAPIへフォールバック（海外ポイントなど）
-            try {
-                const response = await fetch(`https://aviationweather.gov/api/data/isigmet?format=json&id=${pointName}`, { mode: 'cors' });
-                // ※NOAAのパブリック仕様に基づき、見つからない場合はエラーにせずスキップ処理を行う安全設計
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.lat && data.lon) {
-                        MASTER_FIX_DB[pointName] = [data.lat, data.lon];
-                        return MASTER_FIX_DB[pointName];
-                    }
-                }
-            } catch (e) {
-                console.log(`API検索スキップ: ${pointName}`);
-            }
-            return null;
-        }
-
-        // --- 3. 画像解析 (OCR) ---
+        // --- 画像解析 (OCR) ---
         document.getElementById('imageInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
             document.getElementById('status').innerText = "画像を解析中 (OCR)...";
-            
             Tesseract.recognize(file, 'eng').then(({ data: { text } }) => {
                 document.getElementById('textInput').value = text;
                 document.getElementById('status').innerText = "解析完了。ルートをプロットしてください。";
-            }).catch(err => {
+            }).catch(() => {
                 document.getElementById('status').innerText = "OCR解析に失敗しました。";
             });
         });
 
-        // --- 4. 解析・描画コアロジック ---
-        async function parseAndPlot() {
+        // --- プロットロジック ---
+        function parseAndPlot() {
             const text = document.getElementById('textInput').value;
             const statusDiv = document.getElementById('status');
             const legendBody = document.getElementById('legendBody');
@@ -132,10 +111,7 @@
             routeLayers = [];
             legendBody.innerHTML = '';
 
-            if (!text.trim()) {
-                statusDiv.innerText = "テキストがありません。";
-                return;
-            }
+            if (!text.trim()) return;
 
             const variants = text.split(/VRNT\s+/).slice(1);
             if (variants.length === 0) {
@@ -143,68 +119,51 @@
                 return;
             }
 
-            statusDiv.innerText = "ルートプロット中...";
-
-            for (let index = 0; index < variants.length; index++) {
-                const vStr = variants[index];
-                
-                // ルート名抽出
+            variants.forEach((vStr, index) => {
                 let routeName = `VRNT ${index+1}`;
                 const viaMatch = vStr.match(/VIA\s+LOZ-?([A-Z0-9]+)/i) || vStr.match(/VIA\s+([A-Z0-9]+)/i);
                 if (viaMatch) routeName = viaMatch[1];
 
-                // TRIPF / EET 抽出
                 const tripfMatch = vStr.match(/TRIPF\s+(\d+)/i);
                 const eetMatch = vStr.match(/EET\s+([\d\.]+)/i);
                 const tripf = tripfMatch ? parseInt(tripfMatch[1]).toLocaleString() + " lbs" : "N/A";
                 const eet = eetMatch ? eetMatch[1] : "N/A";
 
                 const color = ROUTE_COLORS[index % ROUTE_COLORS.length];
-                const latlngs = [MASTER_FIX_DB.NRT];
+                const latlngs = [];
+                
+                if (NAV_DB.NRT) latlngs.push(NAV_DB.NRT);
 
-                // ウェイポイントのパース
                 const words = vStr.replace(/[\/\(\)\,\-\[\]]/g, ' ').split(/\s+/);
-                for (const word of words) {
+                words.forEach(word => {
                     const cleanWord = word.toUpperCase().trim();
-                    // 航空路名（Y52等）や不要な文字列を除外するフィルタ
-                    if (cleanWord.length >= 3 && cleanWord.length <= 5 && 
-                        cleanWord !== "NRT" && cleanWord !== "SGN" && 
-                        !/^[A-Z]\d/.test(cleanWord) && !/^\d/.test(cleanWord)) {
-                        
-                        const coords = await getCoordinates(cleanWord);
-                        if (coords) {
-                            if (latlngs[latlngs.length - 1] !== coords) {
+                    if (cleanWord.length >= 2 && cleanWord.length <= 5 && cleanWord !== "NRT" && cleanWord !== "SGN") {
+                        if (NAV_DB[cleanWord]) {
+                            const coords = NAV_DB[cleanWord];
+                            if (latlngs.length === 0 || latlngs[latlngs.length - 1] !== coords) {
                                 latlngs.push(coords);
                             }
                         }
                     }
-                }
-                latlngs.push(MASTER_FIX_DB.SGN);
+                });
+                
+                if (NAV_DB.SGN) latlngs.push(NAV_DB.SGN);
 
-                // ラインの描画
                 if (latlngs.length > 2) {
-                    const polyline = L.polyline(latlngs, { color: color, weight: 4, opacity: 0.8 }).addTo(map);
+                    const polyline = L.polyline(latlngs, { color: color, weight: 4, opacity: 0.85 }).addTo(map);
                     polyline.bindPopup(`<b>Route: ${routeName}</b><br>TRIPF: ${tripf}<br>EET: ${eet}`);
                     routeLayers.push(polyline);
                 }
 
-                // 凡例生成
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><input type="checkbox" checked onchange="toggleRoute(${index}, this.checked)"></td>
-                    <td><span class="color-box" style="background-color: ${color}"></span> <b>${routeName}</b></td>
-                    <td>${tripf}</td>
-                    <td>${eet}</td>
-                `;
+                tr.innerHTML = `<td><input type="checkbox" checked onchange="toggleRoute(${index}, this.checked)"></td><td><span class="color-box" style="background-color: ${color}"></span> <b>${routeName}</b></td><td>${tripf}</td><td>${eet}</td>`;
                 legendBody.appendChild(tr);
-            }
+            });
 
             if (routeLayers.length > 0) {
                 const group = new L.FeatureGroup(routeLayers);
                 map.fitBounds(group.getBounds().pad(0.1));
-                statusDiv.innerText = `${routeLayers.length}件のルートを描画しました。`;
-            } else {
-                statusDiv.innerText = "有効なウェイポイント座標が見つからず描画できませんでした。";
+                statusDiv.innerText = "ルートを描画しました（ローカルJSON照合）。";
             }
         }
 
@@ -216,8 +175,9 @@
         document.getElementById('processBtn').addEventListener('click', parseAndPlot);
         window.onload = initMap;
 
+        // PWAサービスワーカーの登録 (切り分けたJSONも自動キャッシュ対象)
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('data:application/javascript;base64,c2VsZi5hZGRFdmVudExpc3RlbmVyKCdmaXRjaCcsIGZ1bmN0aW9uKGV2ZW50KSB7IH0pOw==');
+            navigator.serviceWorker.register('./sw.js');
         }
     </script>
 </body>
