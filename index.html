@@ -145,7 +145,7 @@ TRIPF 56460  EET  5.41"></textarea>
       <div class="setting-label">FlightPlanDatabase APIキー</div>
       <div class="setting-desc">ルートの航路を正確に展開するために使用します。<br>取得先: flightplandatabase.com/settings</div>
       <div class="key-row">
-        <input type="text" id="key-input" placeholder="APIキーをここに貼り付け..." autocomplete="off" style="font-family:'Share Tech Mono',monospace;font-size:0.7rem">
+        <input id="key-input" placeholder="APIキーをここに貼り付け..." autocomplete="new-password" spellcheck="false" style="flex:1;background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:7px 10px;outline:none;min-width:0">
         <button class="mb" onclick="testKey()">確認</button>
         <button class="mb" onclick="saveKey()">保存</button>
       </div>
@@ -236,14 +236,21 @@ function saveKey(){
 
 async function testKey(){
   const key=getApiKey();
-  if(!key){setKeyStatus('先にAPIキーを保存してください','err');return;}
+  if(!key){setKeyStatus('先にAPIキーを入力して「保存」してください','err');return;}
   setKeyStatus('確認中...');
   try{
     const r=await fpdFetch('GET','https://api.flightplandatabase.com/',null,key);
-    if(r.message==='OK') setKeyStatus('✓ 有効です（'+key.slice(0,6)+'...）','ok');
-    else setKeyStatus('✗ 応答異常: '+JSON.stringify(r),'err');
+    if(r.message==='OK') setKeyStatus('✓ 有効です（'+key.slice(0,6)+'...）APIが使えます','ok');
+    else setKeyStatus('✗ 応答: '+JSON.stringify(r),'err');
   }catch(e){
-    setKeyStatus('✗ '+e.message,'err');
+    const msg=e.message||String(e);
+    if(msg.includes('Failed to fetch')||msg.includes('NetworkError')||msg.includes('CORS')||msg.includes('blocked')){
+      setKeyStatus('⚠ CORSブロック: ブラウザがAPIへの接続を拒否しています。FPD APIはこのアプリからは使用できない可能性があります。','err');
+    } else if(msg.includes('401')){
+      setKeyStatus('✗ 認証エラー: APIキーが無効です','err');
+    } else {
+      setKeyStatus('✗ '+msg,'err');
+    }
   }
 }
 
