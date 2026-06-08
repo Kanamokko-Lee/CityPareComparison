@@ -1,512 +1,309 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="JL759">
-<meta name="theme-color" content="#080d18">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-192.png">
-<title>JL759 NRT→SGN</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&display=swap');
-:root {
-  --bg:#080d18; --panel:#0b1220; --border:#1a2e4a; --hi:#1e3d6b;
-  --text:#b0c4de; --white:#e2f0ff; --accent:#00ffcc;
-  --v1:#00ddff; --v2:#ffaa22; --v3:#cc66ff;
-}
-* { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
-body {
-  margin: 0; padding: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  overflow: hidden; height: 100vh;
-}
-#map { width: 100%; height: 100%; z-index: 1; position: absolute; top:0; left:0; }
-.leaflet-container { background: #05080f !important; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flight Route Visualizer</title>
+    <link rel="manifest" href="data:application/manifest+json,{%22name%22:%22Flight%20Route%20Visualizer%22,%22short_name%22:%22RouteVis%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%231a1a1a%22,%22theme_color%22:%22%232c3e50%22}">
+    <meta name="theme-color" content="#2c3e50">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
-/* Dark Map Filter */
-.dark-tile { filter: invert(1) hue-rotate(180deg) brightness(0.6) contrast(1.3) saturate(0.7); }
-
-/* UI Overlays */
-#ibar {
-  position: absolute; top: calc(12px + env(safe-area-inset-top)); left: 50%;
-  transform: translateX(-50%); z-index: 1000;
-  background: rgba(11, 18, 32, 0.85); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: 20px;
-  padding: 6px 16px; font-size: 11px; font-weight: 700; color: var(--accent);
-  letter-spacing: 1px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-  pointer-events: none; transition: opacity 0.3s; display: flex; align-items: center; gap: 6px;
-  white-space: nowrap;
-}
-#ibar::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; display: inline-block; animation: blink 1.5s infinite; }
-@keyframes blink { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-
-#cfg-btn {
-  position: absolute; bottom: calc(20px + env(safe-area-inset-bottom)); right: 16px; z-index: 1000;
-  width: 48px; height: 48px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.4); cursor: pointer; transition: all 0.2s;
-}
-#cfg-btn:active { transform: scale(0.92); background: var(--hi); }
-#cfg-btn svg { width: 22px; height: 22px; fill: var(--white); }
-
-/* Left Route Panels Container */
-#lsvg {
-  position: absolute; bottom: calc(20px + env(safe-area-inset-bottom)); left: 16px; z-index: 1000;
-  display: flex; flex-direction: column; gap: 10px; pointer-events: none; max-width: calc(100% - 90px);
-}
-.rl {
-  background: rgba(11, 18, 32, 0.88); backdrop-filter: blur(10px);
-  border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
-  display: flex; flex-direction: column; gap: 4px; pointer-events: auto; cursor: pointer;
-  box-shadow: 0 6px 15px rgba(0,0,0,0.3); transition: all 0.2s ease; position: relative; overflow: hidden;
-}
-.rl::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--c);
-}
-.rl.sel { background: rgba(30, 61, 107, 0.45); border-color: var(--accent); }
-.rl.hidden { opacity: 0.25; filter: grayscale(0.5); }
-.rl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
-.rl-lbl { font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 700; color: var(--white); }
-.rl-via { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--text); opacity: 0.8; }
-.rl-btm { display: flex; gap: 12px; font-family: 'Share Tech Mono', monospace; font-size: 13px; font-weight: 600; }
-.rl-f { color: var(--accent); }
-.rl-t { color: #fff; opacity: 0.9; }
-
-/* Waypoint Label styling */
-.wp-lbl {
-  background: transparent; border: none; box-shadow: none;
-  font-family: 'Share Tech Mono', monospace; font-size: 9px; font-weight: bold;
-  color: #8fa0b5; text-shadow: 0 0 3px #000, 1px 1px 1px #000;
-  margin-top: -6px !important; margin-left: -12px !important;
-}
-.wp-lbl.sel-wp { color: var(--accent); font-size: 11px; text-shadow: 0 0 5px #000, 0 0 8px var(--accent); z-index: 2000 !important; }
-
-/* Modal and Tabs */
-#modal {
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 5000;
-  background: rgba(4, 7, 13, 0.8); backdrop-filter: blur(12px);
-  display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.25s;
-}
-#modal.open { opacity: 1; pointer-events: auto; }
-#modal-box {
-  width: 90%; max-width: 440px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 12px; display: flex; flex-direction: column; overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.6); max-height: 85vh;
-}
-.tabs { display: flex; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border); }
-.tab {
-  flex: 1; padding: 14px; text-align: center; font-size: 12px; font-weight: 700;
-  color: var(--text); cursor: pointer; transition: all 0.15s; letter-spacing: 1px;
-}
-.tab.active { color: var(--accent); background: var(--panel); border-bottom: 2px solid var(--accent); }
-.tab-p { display: none; padding: 18px; flex-direction: column; gap: 14px; overflow-y: auto; }
-.tab-p.active { display: flex; }
-
-/* Image Tab UI */
-#drop-zone {
-  border: 2px dashed var(--border); border-radius: 8px; padding: 30px 16px;
-  text-align: center; color: var(--text); font-size: 12px; cursor: pointer;
-  transition: all 0.2s; background: rgba(250,250,250,0.01);
-}
-#drop-zone.hover { border-color: var(--accent); background: rgba(0,255,204,0.03); }
-#drop-zone svg { width: 32px; height: 32px; fill: var(--text); opacity: 0.5; margin-bottom: 8px; }
-
-/* Text Tab UI */
-textarea {
-  width: 100%; height: 140px; background: rgba(0,0,0,0.3); border: 1px solid var(--border);
-  border-radius: 6px; padding: 10px; color: #fff; font-family: 'Share Tech Mono', monospace;
-  font-size: 12px; resize: none; -webkit-user-select: text; user-select: text;
-}
-textarea:focus { border-color: var(--hi); outline: none; }
-.btn-row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
-button {
-  background: var(--hi); border: 1px solid var(--border); border-radius: 6px;
-  color: var(--white); padding: 8px 16px; font-size: 12px; font-weight: bold;
-  cursor: pointer; transition: all 0.15s;
-}
-button:active { background: var(--border); }
-button.primary { background: var(--accent); color: var(--bg); border: none; }
-button.primary:active { opacity: 0.8; }
-#p-st { font-size: 11px; color: #ff6666; font-weight: 600; min-height: 14px; }
-
-/* Map controls adjust */
-.leaflet-top.leaflet-left { top: calc(10px + env(safe-area-inset-top)); left: 10px; }
-.leaflet-bar { border: 1px solid var(--border) !important; box-shadow: none !important; }
-.leaflet-bar a { background-color: var(--panel) !important; color: var(--white) !important; border-bottom: 1px solid var(--border) !important; }
-.leaflet-bar a:hover { background-color: var(--hi) !important; }
-</style>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --panel-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --accent-color: #3498db;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #sidebar {
+            width: 380px;
+            background-color: var(--panel-bg);
+            padding: 15px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            z-index: 1000;
+            overflow-y: auto;
+        }
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+        h2 { margin: 0 0 10px 0; font-size: 1.2rem; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        input[type="file"], textarea {
+            background: #111;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        textarea {
+            height: 120px;
+            resize: vertical;
+            font-family: monospace;
+            font-size: 11px;
+        }
+        button {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { opacity: 0.9; }
+        #status {
+            font-size: 12px;
+            color: #f1c40f;
+            min-height: 18px;
+        }
+        .legend-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        .legend-table th, .legend-table td {
+            padding: 6px;
+            text-align: left;
+            border-bottom: 1px solid #444;
+        }
+        .route-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .color-box {
+            width: 12px;
+            height: 12px;
+            display: inline-block;
+            border-radius: 2px;
+        }
+    </style>
 </head>
 <body>
 
-<div id="map"></div>
-<div id="ibar">ROUTE COMPARISON Active</div>
-<div id="lsvg"></div>
+    <div id="sidebar">
+        <h2>Flight Route Visualizer</h2>
+        
+        <div class="input-group">
+            <label>1. フライトプラン画像を解析</label>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
 
-<div id="cfg-btn" onclick="openModal()">
-  <svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.81,11.69,4.81,12s0.03,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
-</div>
+        <div class="input-group">
+            <label>2. またはテキストを直接ペースト</label>
+            <textarea id="textInput" placeholder="VRNT 1 RTNG 01R...&#10;DIST 2551 ESAD 2647 MINF 80678 TRIPF 56460 EET 5.41"></textarea>
+        </div>
 
-<div id="modal" onclick="if(event.target===this)closeModal()">
-  <div id="modal-box">
-    <div class="tabs">
-      <div id="t-img" class="tab active" onclick="stab('img')">画像選択</div>
-      <div id="t-txt" class="tab" onclick="stab('txt')">テキスト貼付</div>
+        <button id="processBtn">ルートをプロット</button>
+        <div id="status"></div>
+
+        <div>
+            <h2>ルート凡例 (Legend)</h2>
+            <table class="legend-table">
+                <thead>
+                    <tr>
+                        <th>有効</th>
+                        <th>ルート名</th>
+                        <th>TRIPF</th>
+                        <th>EET</th>
+                    </tr>
+                </thead>
+                <tbody id="legendBody">
+                    </tbody>
+            </table>
+        </div>
     </div>
-    
-    <div id="p-img" class="tab-p active">
-      <div id="drop-zone" onclick="document.getElementById('f-in').click()" ondragover="this.classList.add('hover');event.preventDefault()" ondragleave="this.classList.remove('hover')" ondrop="onDrop(event)">
-        <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
-        <div>ここにスクショをドロップ、またはタップして選択</div>
-        <input type="file" id="f-in" accept="image/*" style="display:none" onchange="onFile(this.files[0])">
-      </div>
-      <div style="font-size:11px; line-height:1.4; opacity:0.7;">画像解析完了後、自動的にテキスト貼付画面へ移行して内容が挿入されます。</div>
-    </div>
-    
-    <div id="p-txt" class="tab-p">
-      <textarea id="ta" placeholder="VRNTブロックを含むテキストをペーストしてください..."></textarea>
-      <div id="p-st"></div>
-      <div class="btn-row">
-        <button onclick="closeModal()">キャンセル</button>
-        <button class="primary" onclick="doParse()">解析して表示</button>
-      </div>
-    </div>
-  </div>
-</div>
 
-<script>
-// ═══════════════════════════════════════════════
-// DATABASE & FIXES
-// ═══════════════════════════════════════════════
-const FIXES = {
-  'NRT': [35.7720, 140.3926],
-  'SAMUS':[34.8783, 140.0633],
-  'HCE':  [31.9056, 134.1956],
-  'YULIA':[29.3514, 131.2853],
-  'TONAR':[26.0469, 127.8119],
-  'IGURU':[21.8211, 121.7589],
-  'KABAM':[17.5133, 117.8189],
-  'MESOX':[14.3986, 114.9961],
-  'CRA':  [12.3528, 109.2008],
-  'SOSPA':[11.6667, 108.3833],
-  'VETOM':[10.9158, 107.4589],
-  'SGN':  [10.8188, 106.6519],
-  'PIGOK':[35.1581, 139.3106],
-  'IGMON':[33.8247, 137.2883],
-  'DRAKE':[31.4283, 134.2050],
-  'TINHO':[27.4233, 130.4083],
-  'HCN':  [22.2533, 124.9167],
-  'AKARA':[27.8122, 123.6358],
-  'GOMAN':[24.0000, 122.7500],
-  'MUMAN':[19.0000, 119.5000],
-  'SABIS':[15.6550, 115.8617],
-  'A1':   [10.8000, 106.7000]
-};
+    <div id="map"></div>
 
-// デフォルトの初期ルートデータを定義
-const DEFAULT_ROUTES = [
-  {id:1, label:'VRNT 1', via:'Y52N89Q15', color:'#00ddff', dash:null,
-   tripf:56460, time:5.41,
-   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','IGURU','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
-  {id:2, label:'VRNT 2', via:'Y50N89Q15', color:'#ffaa22', dash:'10,5',
-   tripf:57823, time:5.42,
-   rawWps:['NRT','PIGOK','IGMON','DRAKE','TINHO','HCN','KABAM','MESOX','CRA','SOSPA','VETOM','SGN']},
-  {id:3, label:'VRNT 3', via:'Y52A1', color:'#cc66ff', dash:'14,5',
-   tripf:58839, time:5.46,
-   rawWps:['NRT','SAMUS','HCE','YULIA','TONAR','AKARA','GOMAN','MUMAN','SABIS','CRA','SOSPA','VETOM','SGN']}
-];
+    <script>
+        // --- 1. ダミーのフィックス位置データベース (AIPに基づく主要ポイントの代表値) ---
+        // 実運用時はJP-ENRから抽出した完全なJSONに差し替えてください
+        const FIX_DB = {
+            "NRT": [35.7767, 140.3864],
+            "SGN": [10.8188, 106.6519],
+            "SAMUS": [34.7833, 137.9500],
+            "PIGOK": [34.2000, 137.1000],
+            "HCE": [33.5833, 135.9167],
+            "YULIA": [28.5000, 129.5000],
+            "TONAR": [25.0000, 125.0000],
+            "IGMON": [31.5000, 133.0000],
+            "IGURU": [27.0000, 127.5000],
+            "BUBDO": [32.0000, 136.0000],
+            "JOM": [22.0000, 120.0000],
+            "MIA": [18.0000, 115.0000],
+            "PANDI": [14.0000, 111.0000],
+            "SOSPA": [12.5000, 109.5000],
+            "VETOM": [11.5000, 108.2000]
+        };
 
-let MAP, ROUTES = [], LAYERS = [];
-let selId = null;
-let hidden = new Set();
+        const ROUTE_COLORS = ['#e74c3c', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c'];
+        let map, routeLayers = [];
 
-// ═══════════════════════════════════════════════
-// INITIALIZATION
-// ═══════════════════════════════════════════════
-window.addEventListener('DOMContentLoaded', () => {
-  MAP = L.map('map', {
-    zoomControl: true,
-    attributionControl: false,
-    minZoom: 3,
-    maxZoom: 10
-  }).setView([23.5, 123.5], 5);
+        // --- 2. 地図の初期化 ---
+        function initMap() {
+            map = L.map('map', {
+                center: [23.0, 123.0],
+                zoom: 5,
+                minZoom: 3
+            });
 
-  const tile = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd',
-    maxZoom: 20
-  }).addTo(MAP);
+            // 航空マップに馴染むダークモードタイル
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO'
+            }).addTo(map);
 
-  tile.getContainer().classList.add('dark-tile');
-
-  // 初期時はデフォルトルートを読み込む
-  ROUTES = JSON.parse(JSON.stringify(DEFAULT_ROUTES));
-  render();
-});
-
-// ═══════════════════════════════════════════════
-// RENDERING LOGIC (MAP & OVERLAYS)
-// ═══════════════════════════════════════════════
-function render() {
-  // 既存レイヤーのクリア
-  LAYERS.forEach(l => MAP.removeLayer(l));
-  LAYERS = [];
-
-  const container = document.getElementById('lsvg');
-  container.innerHTML = '';
-
-  let activeRoutes = ROUTES.filter(r => !hidden.has(r.id));
-
-  ROUTES.forEach(r => {
-    const isH = hidden.has(r.id);
-    const isS = selId === r.id;
-
-    const card = document.createElement('div');
-    card.className = `rl ${isS ? 'sel' : ''} ${isH ? 'hidden' : ''}`;
-    card.style.setProperty('--c', r.color);
-    card.innerHTML = `
-      <div class="rl-top">
-        <div class="rl-lbl">${r.label}</div>
-        <div class="rl-via">${r.via}</div>
-      </div>
-      <div class="rl-btm">
-        <div class="rl-f">F: ${(r.tripf/1000).toFixed(1)}k</div>
-        <div class="rl-t">T: ${formatTime(r.time)}</div>
-      </div>
-    `;
-
-    card.addEventListener('click', (e) => {
-      if (e.detail === 2) {
-        if (hidden.has(r.id)) {
-          hidden.delete(r.id);
-        } else {
-          hidden.add(r.id);
-          if (selId === r.id) selId = null;
+            // NRT / SGN にデフォルトピン
+            L.marker(FIX_DB.NRT).addTo(map).bindPopup("成田国際空港 (NRT)");
+            L.marker(FIX_DB.SGN).addTo(map).bindPopup("タンソンニャット国際空港 (SGN)");
         }
-      } else {
-        if (hidden.has(r.id)) return;
-        selId = (selId === r.id) ? null : r.id;
-      }
-      render();
-    });
-    container.appendChild(card);
 
-    if (isH) return;
+        // --- 3. OCR画像解析処理 ---
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
 
-    const coords = [];
-    r.rawWps.forEach(name => {
-      if (FIXES[name]) coords.push(FIXES[name]);
-    });
+            document.getElementById('status').innerText = "画像を解析中 (OCR)...";
+            
+            Tesseract.recognize(file, 'eng', {
+                logger: m => { if(m.status === 'recognizing') document.getElementById('status').innerText = `解析中: ${Math.round(m.progress * 100)}%`; }
+            }).then(({ data: { text } }) => {
+                document.getElementById('textInput').value = text;
+                document.getElementById('status').innerText = "解析完了。微調整してプロットしてください。";
+            }).catch(err => {
+                console.error(err);
+                document.getElementById('status').innerText = "OCR解析に失敗しました。";
+            });
+        });
 
-    if (coords.length < 2) return;
+        // --- 4. テキストのパース & プロット ---
+        function parseAndPlot() {
+            const text = document.getElementById('textInput').value;
+            const statusDiv = document.getElementById('status');
+            const legendBody = document.getElementById('legendBody');
+            
+            // 既存レイヤーのクリア
+            routeLayers.forEach(l => map.removeLayer(l));
+            routeLayers = [];
+            legendBody.innerHTML = '';
 
-    const lineOpts = {
-      color: r.color,
-      weight: isS ? 5 : 3,
-      opacity: (selId === null || isS) ? 0.85 : 0.25,
-      dashArray: r.dash,
-      bubbleClickEvents: false
-    };
+            if (!text.trim()) {
+                statusDiv.innerText = "テキストを入力またはパースしてください。";
+                return;
+            }
 
-    const poly = L.polyline(coords, lineOpts).addTo(MAP);
-    
-    poly.on('click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      selId = (selId === r.id) ? null : r.id;
-      render();
-    });
-    LAYERS.push(poly);
-  });
+            // バリアントごとに分割
+            const variants = text.split(/VRNT\s+/).slice(1);
+            if (variants.length === 0) {
+                statusDiv.innerText = "VRNTデータが見つかりませんでした。";
+                return;
+            }
 
-  const wpMap = new Map();
-  ROUTES.forEach(r => {
-    if (hidden.has(r.id)) return;
-    const isS = selId === r.id;
-    const isGlobalNormal = (selId === null);
+            variants.forEach((vStr, index) => {
+                const lines = vStr.split('\n').map(l => l.trim()).filter(l => l);
+                if (lines.length < 2) return;
 
-    r.rawWps.forEach(name => {
-      if (!FIXES[name]) return;
-      if (!wpMap.has(name)) {
-        wpMap.set(name, { isSelected: false, isNormal: false });
-      }
-      const status = wpMap.get(name);
-      if (isS) status.isSelected = true;
-      if (isGlobalNormal) status.isNormal = true;
-    });
-  });
+                // ルート名の抽出 (LOZを除外)
+                let routeName = "Unknown";
+                const viaMatch = vStr.match(/VIA\s+LOZ-?([A-Z0-9]+)/i) || vStr.match(/VIA\s+([A-Z0-9]+)/i);
+                if (viaMatch) {
+                    routeName = viaMatch[1];
+                } else {
+                    const firstLineWords = lines[0].split(/\s+/);
+                    routeName = firstLineWords.find(w => w.includes('Y') || w.includes('Q') || w.includes('A')) || `VRNT ${index+1}`;
+                }
 
-  wpMap.forEach((status, name) => {
-    const pt = FIXES[name];
-    const isSelectedWp = status.isSelected;
-    const isNormalWp = status.isNormal;
+                // TRIPF と EET の抽出
+                const tripfMatch = vStr.match(/TRIPF\s+(\d+)/i);
+                const eetMatch = vStr.match(/EET\s+([\d\.]+)/i);
+                const tripf = tripfMatch ? parseInt(tripfMatch[1]).toLocaleString() + " lbs" : "N/A";
+                const eet = eetMatch ? eetMatch[1] : "N/A";
 
-    if (isSelectedWp || isNormalWp) {
-      const dot = L.circleMarker(pt, {
-        radius: isSelectedWp ? 4 : 2.5,
-        fillColor: isSelectedWp ? '#00ffcc' : '#8fa0b5',
-        color: '#05080f',
-        weight: 1,
-        fillOpacity: 1,
-        interactive: false
-      }).addTo(MAP);
-      LAYERS.push(dot);
+                // ウェイポイントの抽出とマッピング
+                // テキスト内の大文字単語（2〜5文字）を適当にピックアップしてFIX_DBと照合
+                const color = ROUTE_COLORS[index % ROUTE_COLORS.length];
+                const latlngs = [FIX_DB.NRT]; // スタートは成田
 
-      const lblClass = `wp-lbl ${isSelectedWp ? 'sel-wp' : ''}`;
-      const label = L.marker(pt, {
-        icon: L.divIcon({
-          html: name,
-          className: lblClass
-        }),
-        interactive: false
-      }).addTo(MAP);
-      LAYERS.push(label);
-    }
-  });
+                const words = vStr.replace(/[\/\(\)]/g, ' ').split(/\s+/);
+                words.forEach(word => {
+                    const cleanWord = word.toUpperCase().trim();
+                    if (FIX_DB[cleanWord] && cleanWord !== "NRT" && cleanWord !== "SGN") {
+                        // 重複防止
+                        if (latlngs[latlngs.length - 1] !== FIX_DB[cleanWord]) {
+                            latlngs.push(FIX_DB[cleanWord]);
+                        }
+                    }
+                });
+                latlngs.push(FIX_DB.SGN); // ゴールはホーチミン
 
-  const ibar = document.getElementById('ibar');
-  if (selId) {
-    const sr = ROUTES.find(r => r.id === selId);
-    ibar.textContent = `SELECTED: ${sr.label} (${sr.via})`;
-  } else {
-    ibar.textContent = `ROUTE COMPARISON (${activeRoutes.length} ACTIVE)`;
-  }
-}
+                // ポリラインの作成
+                const polyline = L.polyline(latlngs, {
+                    color: color,
+                    weight: 4,
+                    opacity: 0.8
+                }).addTo(map);
+                
+                // ポップアップの設定
+                polyline.bindPopup(`<b>Route: ${routeName}</b><br>TRIPF: ${tripf}<br>EET: ${eet}`);
+                routeLayers.push(polyline);
 
-function formatTime(h) {
-  const m = Math.round(h * 60);
-  return `${Math.floor(m/60)}h${String(m%60).padStart(2,'0')}m`;
-}
+                // 凡例テーブルへの追加
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><input type="checkbox" checked onchange="toggleRoute(${index}, this.checked)"></td>
+                    <td><span class="color-box" style="background-color: ${color}"></span> <b>${routeName}</b></td>
+                    <td>${tripf}</td>
+                    <td>${eet}</td>
+                `;
+                legendBody.appendChild(tr);
+            });
 
-// ═══════════════════════════════════════════════
-// MODAL & TABS MANAGEMENT
-// ═══════════════════════════════════════════════
-function openModal() { document.getElementById('modal').classList.add('open'); }
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
+            // マップの表示範囲をルート全体に合わせる
+            if(routeLayers.length > 0) {
+                const group = new L.FeatureGroup(routeLayers);
+                map.fitBounds(group.getBounds().pad(0.1));
+                statusDiv.innerText = `${routeLayers.length}件のルートをプロットしました。`;
+            }
+        }
 
-function stab(t) {
-  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tab-p').forEach(el => el.classList.remove('active'));
-  document.getElementById(`t-${t}`).classList.add('active');
-  document.getElementById(`p-${t}`).classList.add('active');
-}
+        function toggleRoute(index, isVisible) {
+            if (isVisible) {
+                map.addLayer(routeLayers[index]);
+            } else {
+                map.removeLayer(routeLayers[index]);
+            }
+        }
 
-// ═══════════════════════════════════════════════
-// DRAG & DROP / FILE PROCESSING
-// ═══════════════════════════════════════════════
-function onDrop(e) {
-  e.preventDefault();
-  document.getElementById('drop-zone').classList.remove('hover');
-  if(e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
-}
+        document.getElementById('processBtn').addEventListener('click', parseAndPlot);
+        window.onload = initMap;
 
-function onFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  
-  const st = document.getElementById('p-st');
-  st.textContent = '⏳ 画像を読み込み中...';
-  
-  setTimeout(() => {
-    document.getElementById('ta').value = `VRNT 1 VIA Y52N89Q15 TRIPF 56460 TIME 5.41\nROUTE: NRT SAMUS HCE YULIA TONAR IGURU KABAM MESOX CRA SOSPA VETOM SGN`;
-    st.textContent = '';
-    stab('txt');
-  }, 800);
-}
-
-// ═══════════════════════════════════════════════
-// PARSER & INGESTION LOGIC
-// ═══════════════════════════════════════════════
-function doParse() {
-  const ta = document.getElementById('ta');
-  const st = document.getElementById('p-st');
-  const raw = ta.value.trim();
-
-  if(!raw) {
-    st.textContent = '❌ テキストを入力してください';
-    return;
-  }
-
-  let parsedRoutes = [];
-  try {
-    parsedRoutes = parseText(raw) || [];
-  } catch (e) {
-    st.textContent = '❌ パース中にエラーが発生しました';
-    return;
-  }
-
-  if(!parsedRoutes.length) {
-    st.textContent = '❌ 有効なVRNTブロックが見つかりませんでした';
-    return;
-  }
-
-  ROUTES = parsedRoutes;
-  hidden.clear();
-  selId = null;
-  
-  closeModal();
-  render();
-}
-
-function parseText(text) {
-  // 改行コード（\r\n または \n）で確実に分割（バグ修正箇所）
-  const lines = text.split(/\r?\n/);
-  let currentRoute = null;
-  let routes = [];
-  let idCounter = 1;
-  const colors = ['#00ddff', '#ffaa22', '#cc66ff', '#00ffcc', '#ff5555'];
-
-  lines.forEach(line => {
-    const clean = line.trim().toUpperCase();
-    if (!clean) return;
-
-    if (clean.startsWith('VRNT')) {
-      if (currentRoute) routes.push(currentRoute);
-      
-      const parts = clean.split(/\s+/);
-      const label = parts.slice(0, 2).join(' ');
-      
-      let via = 'DIRECT';
-      let tripf = 55000;
-      let time = 5.0;
-
-      const viaIdx = parts.indexOf('VIA');
-      if (viaIdx !== -1 && parts[viaIdx+1]) via = parts[viaIdx+1];
-
-      const fuelIdx = parts.indexOf('TRIPF');
-      if (fuelIdx !== -1 && parts[fuelIdx+1]) tripf = parseFloat(parts[fuelIdx+1]) || 55000;
-
-      const timeIdx = parts.indexOf('TIME');
-      if (timeIdx !== -1 && parts[timeIdx+1]) time = parseFloat(parts[timeIdx+1]) || 5.0;
-
-      currentRoute = {
-        id: idCounter,
-        label: label,
-        via: via,
-        color: colors[(idCounter - 1) % colors.length],
-        dash: idCounter > 1 ? `${idCounter * 4},4` : null,
-        tripf: tripf,
-        time: time,
-        rawWps: []
-      };
-      idCounter++;
-    } else if (clean.startsWith('ROUTE:') && currentRoute) {
-      const wps = clean.replace('ROUTE:', '').trim().split(/\s+/);
-      currentRoute.rawWps = wps;
-    } else if (currentRoute && currentRoute.rawWps.length === 0) {
-      const tokens = clean.split(/\s+/);
-      if (tokens.every(t => FIXES[t])) {
-        currentRoute.rawWps = tokens;
-      }
-    }
-  });
-
-  if (currentRoute) routes.push(currentRoute);
-  return routes;
-}
-</script>
-
+        // --- 5. PWA用 Service Worker の登録 ---
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('data:application/javascript;base64,c2VsZi5hZGRFdmVudExpc3RlbmVyKCdmaXRjaCcsIGZ1bmN0aW9uKGV2ZW50KSB7IH0pOw==');
+        }
+    </script>
 </body>
 </html>
