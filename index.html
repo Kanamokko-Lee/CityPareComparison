@@ -145,7 +145,7 @@ TRIPF 56460  EET  5.41"></textarea>
       <div class="setting-label">FlightPlanDatabase APIキー</div>
       <div class="setting-desc">ルートの航路を正確に展開するために使用します。<br>取得先: flightplandatabase.com/settings</div>
       <div class="key-row">
-        <input type="password" id="key-input" placeholder="APIキーを入力..." autocomplete="off" oninput="onKeyInput()">
+        <input type="text" id="key-input" placeholder="APIキーをここに貼り付け..." autocomplete="off" style="font-family:'Share Tech Mono',monospace;font-size:0.7rem">
         <button class="mb" onclick="testKey()">確認</button>
         <button class="mb" onclick="saveKey()">保存</button>
       </div>
@@ -220,34 +220,28 @@ function cacheWaypoint(id,data){
 // ═══════════════════════════════════════════════
 function getApiKey(){return localStorage.getItem('fpd_api_key')||'';}
 
-function saveKey(){
-  const v=document.getElementById('key-input').value.trim();
-  // ●マスク表示のままなら保存しない
-  if(!v||v.includes('●')){setKeyStatus('新しいキーを入力してから保存してください','err');return;}
-  localStorage.setItem('fpd_api_key',v);
-  // 保存後はマスク表示に戻す
-  document.getElementById('key-input').value='●'.repeat(Math.min(v.length,24));
-  document.getElementById('key-input').type='password';
-  setKeyStatus('✓ 保存しました','ok');
-}
-
 function setKeyStatus(msg,cls=''){
   const el=document.getElementById('key-status');
-  el.textContent=msg;el.className='key-status'+(cls?' '+cls:'');
+  el.textContent=msg; el.className='key-status'+(cls?' '+cls:'');
+}
+
+function saveKey(){
+  const v=document.getElementById('key-input').value.trim();
+  if(!v){setKeyStatus('キーを入力してください','err');return;}
+  localStorage.setItem('fpd_api_key',v);
+  document.getElementById('key-input').value='';
+  document.getElementById('key-input').placeholder='変更する場合は新しいキーを入力...';
+  setKeyStatus('✓ 保存しました（'+v.slice(0,6)+'...）','ok');
 }
 
 async function testKey(){
-  // 常にlocalStorageの保存済みキーを使用（input表示はマスクのため）
-  const stored=getApiKey();
-  // もし入力欄に新しいキーが入っていれば（マスクでない）そちらを使う
-  const inputVal=document.getElementById('key-input').value.trim();
-  const key=(inputVal&&!inputVal.includes('●'))?inputVal:stored;
-  if(!key){setKeyStatus('先にAPIキーを入力して「保存」してください','err');return;}
+  const key=getApiKey();
+  if(!key){setKeyStatus('先にAPIキーを保存してください','err');return;}
   setKeyStatus('確認中...');
   try{
     const r=await fpdFetch('GET','https://api.flightplandatabase.com/',null,key);
-    if(r.message==='OK') setKeyStatus('✓ 有効なAPIキーです','ok');
-    else setKeyStatus('✗ 応答: '+JSON.stringify(r),'err');
+    if(r.message==='OK') setKeyStatus('✓ 有効です（'+key.slice(0,6)+'...）','ok');
+    else setKeyStatus('✗ 応答異常: '+JSON.stringify(r),'err');
   }catch(e){
     setKeyStatus('✗ '+e.message,'err');
   }
@@ -626,10 +620,9 @@ function openSettings(){
   document.getElementById('m-settings').classList.add('on');
   const k=getApiKey();
   const inp=document.getElementById('key-input');
-  // マスク表示（実際のキー値は見せない）
-  inp.value=k?'●'.repeat(Math.min(k.length,24)):'';
-  inp.type='password';
-  setKeyStatus(k?'✓ APIキー設定済み（確認ボタンで有効性をチェック）':'未設定 — キーを入力して保存してください', k?'ok':'err');
+  inp.value='';  // 常に空欄で開く
+  inp.placeholder=k?'変更する場合は新しいキーを入力...':'APIキーをここに貼り付け...';
+  setKeyStatus(k?'✓ APIキー設定済み（'+k.slice(0,6)+'...）— 確認ボタンで有効性をチェック':'未設定', k?'ok':'err');
   updateCacheDesc();
 }
 function closeSettings(){document.getElementById('m-settings').classList.remove('on');}
@@ -640,24 +633,6 @@ function clearCache(){
   localStorage.removeItem(CACHE_KEY);
   updateCacheDesc();
 }
-
-// タップしたら入力欄をクリアして新しいキーを入力できるようにする
-document.getElementById('key-input').addEventListener('focus',function(){
-  if(this.value.includes('●')){
-    this.value='';  // マスクをクリアして入力待ち
-    this.type='text';
-    setKeyStatus('新しいAPIキーを入力してください');
-  }
-});
-document.getElementById('key-input').addEventListener('blur',function(){
-  // フォーカスが外れて何も入力されていなければマスクに戻す
-  if(!this.value.trim()){
-    const k=getApiKey();
-    this.value=k?'●'.repeat(Math.min(k.length,24)):'';
-    this.type='password';
-    setKeyStatus(k?'✓ APIキー設定済み':'未設定',k?'ok':'');
-  }
-});
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 openMain();
