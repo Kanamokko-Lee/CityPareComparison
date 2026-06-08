@@ -1,25 +1,21 @@
-const CACHE = 'jl759-v2';
-const ASSETS = ['./', './index.html', './manifest.json',
-  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
-  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'];
+const CACHE_NAME = 'route-visualizer-v1';
+const ASSETS = [
+  './',
+  './index.html',
+  './navdata.json',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'
+];
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(()=>{}));
-  self.skipWaiting();
+self.addEventListener('install', (e) => {
+  e.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+  );
 });
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks =>
-    Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));
-  self.clients.claim();
-});
-self.addEventListener('fetch', e => {
+
+self.addEventListener('fetch', (e) => {
   e.respondWith(
-    caches.match(e.request)
-      .then(r => r || fetch(e.request).then(res => {
-        if (res.ok && e.request.url.startsWith('http')) {
-          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
-        }
-        return res;
-      })).catch(() => caches.match('./index.html'))
+    caches.match(e.request).then((response) => response || fetch(e.request))
   );
 });
