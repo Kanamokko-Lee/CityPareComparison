@@ -283,20 +283,19 @@ async function fpdFetch(method, url, body, key) {
 }
 
 // Decode a full route string via FPD API
-// Returns array of {ident, lat, lon, type, name}
 async function fpdDecode(routeStr){
+  console.log('→ fpdDecode sending:', routeStr);
   const data=await fpdFetch('POST','https://api.flightplandatabase.com/auto/decode',{route:routeStr});
-  return (data.route?.nodes||[]).map(n=>({
+  console.log('→ fpdDecode raw response:', JSON.stringify(data).slice(0,300));
+  const nodes=(data.route?.nodes||[]).map(n=>({
     ident:n.ident, lat:n.lat, lon:n.lon, type:n.type, name:n.name||n.ident
   }));
+  console.log(`→ fpdDecode got ${nodes.length} nodes`);
+  return nodes;
 }
 
-// Build route string from rawWps (including airways already extracted by parser)
-// We pass the full OPTD text directly to let FPD resolve airways
-async function resolveRouteFPD(routeStr, progressCb){
-  progressCb && progressCb(10,'FPD APIでルート解析中...');
+async function resolveRouteFPD(routeStr){
   const nodes=await fpdDecode(routeStr);
-  // Cache all waypoints
   const c=getCache();
   for(const n of nodes){
     if(n.ident&&n.lat&&n.lon&&!FIXED[n.ident]){
@@ -304,8 +303,9 @@ async function resolveRouteFPD(routeStr, progressCb){
     }
   }
   saveCache(c);
-  progressCb && progressCb(90,'完了');
-  return nodes.map(n=>({lat:n.lat,lon:n.lon,type:n.type,name:n.ident,est:false})).filter(n=>n.lat&&n.lon);
+  const pts=nodes.map(n=>({lat:n.lat,lon:n.lon,type:n.type,name:n.ident,est:false})).filter(n=>n.lat&&n.lon);
+  console.log(`→ resolveRouteFPD: ${pts.length} valid points`);
+  return pts;
 }
 
 // ═══════════════════════════════════════════════
