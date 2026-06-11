@@ -197,6 +197,16 @@ function loadDB(){
   try{const b=atob(DB_GZ_B64),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);DB=JSON.parse(pako.inflate(u,{to:'string'}));}catch(e){console.warn(e);}
 }
 
+// nav_extra.json（GitHub Actionsで生成）を非同期ロード
+let EXTRA={};
+async function loadExtra(){
+  try{
+    const r=await fetch('./nav_extra.json?_='+Date.now());
+    if(r.ok) EXTRA=await r.json();
+    console.log(`nav_extra.json loaded: ${Object.keys(EXTRA).length} waypoints`);
+  }catch(e){/* ファイルがなければスキップ */}
+}
+
 // localStorage waypoint cache
 const CACHE_KEY='fpd_wp_cache_v1';
 function getCache(){try{return JSON.parse(localStorage.getItem(CACHE_KEY)||'{}');}catch{return {};}}
@@ -205,6 +215,7 @@ function cacheCount(){return Object.keys(getCache()).length;}
 
 function lookup(id){
   if(FIXED[id])return FIXED[id];
+  if(EXTRA[id])return EXTRA[id];         // GitHub Actions生成DBを優先
   const cache=getCache();
   if(cache[id])return cache[id];
   if(!DB)loadDB();
@@ -254,16 +265,20 @@ async function testKey(){
   }
 }
 
-// ═══════════════════════════════════════════════
-// FLIGHTPLANDATABASE API
-// ═══════════════════════════════════════════════
-async function fpdFetch(method,url,body,key){
-  key=key||getApiKey();
-  const headers={'Content-Type':'application/json','Authorization':'Basic '+btoa(key+':')};
-  const opts={method,headers};
-  if(body)opts.body=JSON.stringify(body);
-  const r=await fetch(url,opts);
-  if(!r.ok){const t=await r.text();throw new Error('HTTP '+r.status+': '+t.slice(0,100));}
+// FPD API経由 (Cloudflare Workerプロキシ)
+const FPD_PROXY = 'https://city-pare.happykanamo.workers.dev';
+
+async function fpdFetch(method, url, body, key) {
+  key = key || getApiKey();
+  const proxyUrl = url.replace('https://api.flightplandatabase.com', FPD_PROXY);
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Basic ' + btoa(key + ':'),
+  };
+  const opts = { method, headers };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(proxyUrl, opts);
+  if (!r.ok) { const t = await r.text(); throw new Error('HTTP ' + r.status + ': ' + t.slice(0, 100)); }
   return r.json();
 }
 
@@ -642,7 +657,7 @@ function clearCache(){
 }
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
-openMain();
+loadExtra().then(()=>openMain());
 </script>
 </body>
 </html>
