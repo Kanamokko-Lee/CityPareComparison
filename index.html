@@ -331,11 +331,11 @@ function sanitize(pts){
 function eet(v){const h=Math.floor(v),m=Math.round((v-h)*100);return h+'+'+String(m).padStart(2,'0')}
 
 // ═══════════════════════════════════════════════
-// PARSER — extracts both waypoints AND route string for FPD
+// PARSER
 // ═══════════════════════════════════════════════
 const SKIP_WP=new Set(['LOZ','DCT','THE','AND','FOR','NOT','ALL','VIA','ZFW','TCF',
   'EET','DIST','ESAD','MINF','TRIPF','COST','FUEL','TIME','OVRFLT',
-  'TOTAL','RTNG','OPTD','PROFILE','JAL','DIRECT']);
+  'TOTAL','RTNG','OPTD','PROFILE','JAL','DIRECT','OPTD']);
 const IS_AWY=/^[A-Z]{1,3}\d|\d/;
 
 function parseRoutes(text){
@@ -346,12 +346,23 @@ function parseRoutes(text){
   for(const blk of blocks){
     const idM=blk.match(/\bVRNT\s+(\d+)/);if(!idM)continue;
     const id=parseInt(idM[1]);
+
+    // via: "VIA LOZ-Y52A1" → "Y52A1"、"VIA LOZ Y52A1" → "Y52A1"、括弧以降除去
     const viaM=blk.match(/\bVIA\s+(\S+)/);
-    const via=(viaM?viaM[1]:'').replace(/^LOZ[-]/i,'').replace(/\(.*$/,'').trim();
+    let via=(viaM?viaM[1]:'')
+      .replace(/^LOZ[-\s]*/i,'')   // LOZ- または LOZ スペース を除去
+      .replace(/\(.*$/,'')          // 括弧以降除去
+      .trim();
+    // via が空 or LOZ だった場合、VIA行全体から2番目のトークンを取る
+    if(!via||via.toUpperCase()==='LOZ'){
+      const viaLine=blk.match(/\bVIA\s+\S+\s+(\S+)/);
+      if(viaLine) via=viaLine[1].replace(/\(.*$/,'').trim();
+    }
+
     const num =t=>{const m=blk.match(new RegExp('\\b'+t+'\\s+(\\d+)'));return m?parseInt(m[1]):0;};
     const numF=t=>{const m=blk.match(new RegExp('\\b'+t+'\\s+([\\d.]+)'));return m?parseFloat(m[1]):0;};
 
-    // Collect OPTD lines
+    // OPTDブロック収集
     const lines=blk.split('\n');let inO=false,optL=[];
     for(const ln of lines){
       if(/\bOPTD\b/.test(ln))inO=true;
@@ -359,20 +370,22 @@ function parseRoutes(text){
     }
     const optText=optL.join(' ');
 
-    // Build FPD route string: RJAA + all tokens (waypoints AND airways) + VVTS
-    // FPD decode will resolve airways to intermediate waypoints
+    // FPDルート文字列: RJAA + ウェイポイント+航路名 + VVTS
+    // 条件: 2-6文字の英数字、ただしスラッシュ付き(/F330等)・純粋数字・既知スキップ語は除外
     const fpdTokens=['RJAA'];
-    for(const tok of optText.split(/[\s,\/\(\)\[\]]+/)){
+    for(const tok of optText.split(/\s+/)){
       const t=tok.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
       if(!t||t.length<2||t.length>6)continue;
       if(SKIP_WP.has(t))continue;
-      if(/^[FN]\d{3}/.test(t))continue; // flight level
+      if(/^\d+$/.test(t))continue;           // 純粋数字
+      if(/^[FN]\d{2,3}$/.test(t))continue;  // F400, N892 等のフライトレベル・高度
+      if(tok.startsWith('/'))continue;        // /F400 等
       fpdTokens.push(t);
     }
     fpdTokens.push('VVTS');
     const fpdRoute=fpdTokens.join(' ');
 
-    // Also extract waypoints-only for local fallback
+    // ローカルフォールバック用ウェイポイント（3文字VOR or 5文字fix）
     const wps=[];
     for(const tok of optText.split(/[\s,\/\(\)\[\]]+/)){
       const t=tok.replace(/[^A-Za-z]/g,'').toUpperCase();
@@ -387,7 +400,7 @@ function parseRoutes(text){
       id,label:'VRNT '+id,via,
       color:COLORS[i%COLORS.length],dash:DASHES[i%DASHES.length],
       tripf:num('TRIPF'),time:numF('EET'),
-      fpdRoute,  // full route string for FPD API
+      fpdRoute,
       rawWps:['NRT',...wps.filter(w=>w!=='NRT'&&w!=='SGN'),'SGN']
     });
   }
@@ -589,6 +602,7 @@ async function doGo(){
         const pct=25+Math.round((i/routes.length)*65);
         setProg(pct);setSt(`(${i+1}/${routes.length}) ${r.label} を解析中...`);
         try{
+          console.log(`FPD route ${r.label}:`, r.fpdRoute);
           const pts=await resolveRouteFPD(r.fpdRoute);
           if(pts.length>=2)r._pts=pts;
           else r._pts=resolveRouteLocal(r);
