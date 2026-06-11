@@ -332,74 +332,98 @@ function eet(v){const h=Math.floor(v),m=Math.round((v-h)*100);return h+'+'+Strin
 
 // ═══════════════════════════════════════════════
 // PARSER
+// フォーマット理解:
+// VRNT N RTNG XXR VIA [LOZ-]ルート名[(説明)]
+// JA機番 型式 ZFW XXXXXX
+// CI(0)OPTD /FXXX DCT WP1 AWY1 WP2 AWY2 WP3 DCT WP4 ...
+//   英字+数字 = 航空路名 (Y84, Q15, A590, N89, W15等) → FPDに渡す
+//   大文字アルファのみ3文字 = VOR、5文字 = Waypoint → FPDに渡す
+//   DCT = Direct（航空路なしで直行）→ 除外
+//   /FXXX = フライトレベル → 除外
+// DIST XXX ESAD XXX MINF XXX TRIPF XXX EET X.XX
 // ═══════════════════════════════════════════════
-const SKIP_WP=new Set(['LOZ','DCT','THE','AND','FOR','NOT','ALL','VIA','ZFW','TCF',
-  'EET','DIST','ESAD','MINF','TRIPF','COST','FUEL','TIME','OVRFLT',
-  'TOTAL','RTNG','OPTD','PROFILE','JAL','DIRECT','OPTD']);
-const IS_AWY=/^[A-Z]{1,3}\d|\d/;
+const SKIP_WP=new Set([
+  'DCT','LOZ','VIA','ZFW','TCF','OPTD','RTNG','PROFILE','JAL','DIRECT',
+  'EET','DIST','ESAD','MINF','TRIPF','COST','FUEL','TIME','OVRFLT','TOTAL',
+]);
 
 function parseRoutes(text){
   const COLORS=['#00ddff','#ffaa22','#cc66ff','#33ee88','#ff5566','#ffdd44','#ff8844'];
   const DASHES=[null,'10,5','14,5','6,4','8,4','10,4',null];
   const blocks=text.split(/(?=\bVRNT\s+\d)/);
   const routes=[];
+
   for(const blk of blocks){
     const idM=blk.match(/\bVRNT\s+(\d+)/);if(!idM)continue;
     const id=parseInt(idM[1]);
 
-    // via: "VIA LOZ-Y52A1" → "Y52A1"、"VIA LOZ Y52A1" → "Y52A1"、括弧以降除去
-    const viaM=blk.match(/\bVIA\s+(\S+)/);
-    let via=(viaM?viaM[1]:'')
-      .replace(/^LOZ[-\s]*/i,'')   // LOZ- または LOZ スペース を除去
-      .replace(/\(.*$/,'')          // 括弧以降除去
-      .trim();
-    // via が空 or LOZ だった場合、VIA行全体から2番目のトークンを取る
-    if(!via||via.toUpperCase()==='LOZ'){
-      const viaLine=blk.match(/\bVIA\s+\S+\s+(\S+)/);
-      if(viaLine) via=viaLine[1].replace(/\(.*$/,'').trim();
+    // via: VIA行からLOZと括弧を除去してルート名だけ取り出す
+    // "VIA LOZ-Y52N89Q15(CRA U/S,...)" → "Y52N89Q15"
+    // "VIA LOZ Y52A1" → "Y52A1"
+    // "VIA AVB FL335 AT MEVIN,Q15L62Y57(DCT AZAMA)..." → "Q15L62Y57"
+    const viaLineM=blk.match(/\bVIA\s+(.+)/);
+    let via='';
+    if(viaLineM){
+      // LOZ- または LOZ(スペース)を除去
+      via=viaLineM[1]
+        .replace(/^LOZ[-\s]+/i,'')   // 先頭のLOZ除去
+        .replace(/\(.*$/,'')          // 括弧以降除去
+        .split(/\s+/)[0]              // 最初のトークンだけ
+        .trim();
     }
 
     const num =t=>{const m=blk.match(new RegExp('\\b'+t+'\\s+(\\d+)'));return m?parseInt(m[1]):0;};
     const numF=t=>{const m=blk.match(new RegExp('\\b'+t+'\\s+([\\d.]+)'));return m?parseFloat(m[1]):0;};
 
-    // OPTDブロック収集
-    const lines=blk.split('\n');let inO=false,optL=[];
+    // OPTDブロック: CI(0)OPTD から DIST行の手前まで
+    const lines=blk.split('\n');
+    let inO=false, optL=[];
     for(const ln of lines){
-      if(/\bOPTD\b/.test(ln))inO=true;
-      if(inO){if(/^\s*(?:DIST|PROFILE|COST|MINF)\b/.test(ln)){inO=false;break;}optL.push(ln);}
+      if(/\bOPTD\b/.test(ln)){inO=true;}
+      if(inO){
+        if(/^\s*(?:DIST|PROFILE|COST|MINF)\b/.test(ln)){inO=false;break;}
+        optL.push(ln);
+      }
     }
     const optText=optL.join(' ');
 
-    // FPDルート文字列: RJAA + ウェイポイント+航路名 + VVTS
-    // 条件: 2-6文字の英数字、ただしスラッシュ付き(/F330等)・純粋数字・既知スキップ語は除外
+    // FPDルート文字列構築
+    // トークン条件:
+    //   - /Fxxx, /Rxxx 等スラッシュ付き → 除外
+    //   - 純粋数字 → 除外
+    //   - CI値(数字のみ先頭) → 除外
+    //   - SKIP_WP → 除外
+    //   - 残り = ウェイポイント(3or5文字アルファ) or 航空路(英字+数字) → FPDに渡す
     const fpdTokens=['RJAA'];
     for(const tok of optText.split(/\s+/)){
+      if(!tok||tok.startsWith('/'))continue;        // /F400等除外
       const t=tok.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
       if(!t||t.length<2||t.length>6)continue;
       if(SKIP_WP.has(t))continue;
-      if(/^\d+$/.test(t))continue;           // 純粋数字
-      if(/^[FN]\d{2,3}$/.test(t))continue;  // F400, N892 等のフライトレベル・高度
-      if(tok.startsWith('/'))continue;        // /F400 等
+      if(/^\d+$/.test(t))continue;                 // 純粋数字除外
+      if(/^\d/.test(t))continue;                   // 数字始まり除外(70等)
       fpdTokens.push(t);
     }
     fpdTokens.push('VVTS');
     const fpdRoute=fpdTokens.join(' ');
+    console.log(`VRNT${id} FPD:`, fpdRoute);
 
-    // ローカルフォールバック用ウェイポイント（3文字VOR or 5文字fix）
+    // ローカルフォールバック用: 3文字VOR or 5文字fixのみ
     const wps=[];
-    for(const tok of optText.split(/[\s,\/\(\)\[\]]+/)){
+    for(const tok of optText.split(/\s+/)){
+      if(!tok||tok.startsWith('/'))continue;
       const t=tok.replace(/[^A-Za-z]/g,'').toUpperCase();
       if(t.length!==3&&t.length!==5)continue;
       if(SKIP_WP.has(t))continue;
-      if(IS_AWY.test(t))continue;
+      if(/\d/.test(tok))continue;                  // 元トークンに数字があれば航路名→除外
       if(/^[A-Z]+$/.test(t))wps.push(t);
     }
 
     const i=routes.length;
     routes.push({
-      id,label:'VRNT '+id,via,
-      color:COLORS[i%COLORS.length],dash:DASHES[i%DASHES.length],
-      tripf:num('TRIPF'),time:numF('EET'),
+      id, label:'VRNT '+id, via,
+      color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
+      tripf:num('TRIPF'), time:numF('EET'),
       fpdRoute,
       rawWps:['NRT',...wps.filter(w=>w!=='NRT'&&w!=='SGN'),'SGN']
     });
