@@ -286,12 +286,18 @@ async function fpdFetch(method, url, body, key) {
 async function fpdDecode(routeStr){
   console.log('→ fpdDecode sending:', routeStr);
   const data=await fpdFetch('POST','https://api.flightplandatabase.com/auto/decode',{route:routeStr});
-  console.log('→ fpdDecode raw response:', JSON.stringify(data).slice(0,300));
-  const nodes=(data.route?.nodes||[]).map(n=>({
-    ident:n.ident, lat:n.lat, lon:n.lon, type:n.type, name:n.name||n.ident
+  console.log('→ fpdDecode full response:', JSON.stringify(data));
+  // FPDのレスポンス構造: data自体がrouteオブジェクトの場合と、data.routeの場合がある
+  const routeObj = data.route || data;
+  const nodes = routeObj.nodes || routeObj.waypoints || [];
+  console.log(`→ fpdDecode got ${nodes.length} nodes, keys:`, Object.keys(data));
+  return nodes.map(n=>({
+    ident: n.ident || n.name || n.icao,
+    lat: n.lat || n.latitude,
+    lon: n.lon || n.longitude || n.lng,
+    type: n.type,
+    name: n.name || n.ident
   }));
-  console.log(`→ fpdDecode got ${nodes.length} nodes`);
-  return nodes;
 }
 
 async function resolveRouteFPD(routeStr){
