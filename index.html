@@ -621,18 +621,24 @@ async function doGo(){
     const apiKey=getApiKey();
     if(apiKey){
       setProg(25);setSt('FlightPlanDatabase APIでルートを展開中...');
+      const TEST_LIMIT=2; // テスト中は2ルートに制限（1日100リクエスト節約）
       for(let i=0;i<routes.length;i++){
         const r=routes[i];
         const pct=25+Math.round((i/routes.length)*65);
         setProg(pct);setSt(`(${i+1}/${routes.length}) ${r.label} を解析中...`);
-        try{
-          console.log(`FPD route ${r.label}:`, r.fpdRoute);
-          const pts=await resolveRouteFPD(r.fpdRoute);
-          if(pts.length>=2)r._pts=pts;
-          else r._pts=resolveRouteLocal(r);
-        }catch(e){
-          console.warn('FPD failed for',r.label,e.message);
+        if(i<TEST_LIMIT){
+          try{
+            console.log(`FPD route ${r.label}:`, r.fpdRoute);
+            const pts=await resolveRouteFPD(r.fpdRoute);
+            if(pts.length>=2)r._pts=pts;
+            else r._pts=resolveRouteLocal(r);
+          }catch(e){
+            console.warn('FPD failed for',r.label,e.message);
+            r._pts=resolveRouteLocal(r);
+          }
+        } else {
           r._pts=resolveRouteLocal(r);
+          setSt(`(${i+1}/${routes.length}) ${r.label} はローカルDBで表示`);
         }
       }
     } else {
