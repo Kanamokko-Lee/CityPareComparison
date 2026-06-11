@@ -286,18 +286,29 @@ async function fpdFetch(method, url, body, key) {
 async function fpdDecode(routeStr){
   console.log('→ fpdDecode sending:', routeStr);
   const data=await fpdFetch('POST','https://api.flightplandatabase.com/auto/decode',{route:routeStr});
-  console.log('→ fpdDecode full response:', JSON.stringify(data));
-  // FPDのレスポンス構造: data自体がrouteオブジェクトの場合と、data.routeの場合がある
-  const routeObj = data.route || data;
-  const nodes = routeObj.nodes || routeObj.waypoints || [];
-  console.log(`→ fpdDecode got ${nodes.length} nodes, keys:`, Object.keys(data));
-  return nodes.map(n=>({
-    ident: n.ident || n.name || n.icao,
-    lat: n.lat || n.latitude,
-    lon: n.lon || n.longitude || n.lng,
-    type: n.type,
-    name: n.name || n.ident
-  }));
+  
+  // data.waypoints は件数(数値)のみ。実際のウェイポイントはdata.idで別途取得が必要
+  // encodedPolylineからデコードする方法を使う
+  const planId = data.id;
+  console.log(`→ plan id: ${planId}, waypoints count: ${data.waypoints}`);
+  
+  if(!planId) return [];
+  
+  // フライトプランの詳細を取得
+  const detail = await fpdFetch('GET', `https://api.flightplandatabase.com/plan/${planId}`);
+  console.log('→ plan detail keys:', Object.keys(detail));
+  
+  const wps = detail.route?.nodes || detail.waypoints || detail.nodes || [];
+  console.log(`→ got ${wps.length} waypoints from plan detail`);
+  if(wps.length > 0) console.log('→ first wp:', JSON.stringify(wps[0]));
+  
+  return wps.map(n=>({
+    ident: n.ident || n.name || n.icao || '',
+    lat: n.lat || n.latitude || 0,
+    lon: n.lon || n.longitude || n.lng || 0,
+    type: n.type || 'WPT',
+    name: n.name || n.ident || ''
+  })).filter(n=>n.lat&&n.lon);
 }
 
 async function resolveRouteFPD(routeStr){
