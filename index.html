@@ -26,6 +26,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #map{position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px));left:0;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:1}
 .leaflet-container{background:#04080f}
 .leaflet-tile{filter:brightness(.55) saturate(.35) hue-rotate(195deg)}
+/* 気象レイヤーのtileは色調整 */
+.wx-rain-tile{filter:hue-rotate(180deg) saturate(2) brightness(1.4) contrast(1.3) !important}
+.wx-sat-tile{filter:invert(1) brightness(0.85) sepia(0.3) !important}
 .leaflet-control-zoom{border:1px solid var(--hi)!important}
 .leaflet-control-zoom a{background:#0b1220!important;color:var(--accent)!important;border-bottom:1px solid var(--border)!important;font-size:1.1rem!important}
 .leaflet-popup-content-wrapper{background:#0a1825!important;border:1px solid var(--hi)!important;border-radius:6px!important;box-shadow:0 4px 20px rgba(0,0,0,.8)!important}
@@ -694,7 +697,8 @@ function showRadarFrame(idx){
   idx=Math.max(0,Math.min(idx,radarFrames.length-1));
   currentFrameIdx=idx;
   if(wxLayers.rain){map.removeLayer(wxLayers.rain);wxLayers.rain=null;}
-  wxLayers.rain=L.tileLayer(buildRadarUrl(radarFrames[idx]),{opacity:0.75,maxZoom:14,zIndex:200}).addTo(map);
+  const _rl=L.tileLayer(buildRadarUrl(radarFrames[idx]),{opacity:0.75,maxZoom:14,zIndex:200,className:'wx-rain-tile'}).addTo(map);
+  wxLayers.rain=_rl;
   updateSliderUI();
 }
 
@@ -715,10 +719,33 @@ function createSlider(){
   wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">🌧 過去</span>
     <input id="wx-slider" type="range" min="0" max="${radarFrames.length-1}" value="${currentFrameIdx}" step="1" style="flex:1;accent-color:#40e090;cursor:pointer" oninput="showRadarFrame(parseInt(this.value))">
     <span id="wx-time-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:55px;text-align:right"></span>
+    <select id="wx-filter-sel" onchange="applyRainFilter(this.value)" style="background:#0b1220;border:1px solid var(--hi);border-radius:4px;color:var(--accent);font-family:'Share Tech Mono',monospace;font-size:0.6rem;padding:2px 4px;cursor:pointer">
+      <option value="default">標準</option>
+      <option value="invert">反転</option>
+      <option value="vivid">鮮明</option>
+      <option value="warm">暖色</option>
+      <option value="cool" selected>寒色</option>
+    </select>
     <button onclick="removeSlider()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;line-height:1;padding:0 2px">✕</button>`;
   document.body.appendChild(wrap);
   sliderEl=document.getElementById('wx-slider');
   updateSliderUI();
+}
+
+function applyRainFilter(mode){
+  const styles={
+    'default': 'hue-rotate(180deg) saturate(2) brightness(1.4) contrast(1.3)',
+    'invert':  'invert(1) hue-rotate(180deg) saturate(2) brightness(1.2)',
+    'vivid':   'hue-rotate(180deg) saturate(3) brightness(1.6) contrast(1.8)',
+    'warm':    'hue-rotate(120deg) saturate(2.5) brightness(1.4) contrast(1.4)',
+    'cool':    'hue-rotate(200deg) saturate(2) brightness(1.5) contrast(1.3)',
+  };
+  const css=document.createElement('style');
+  css.id='wx-rain-filter-override';
+  const existing=document.getElementById('wx-rain-filter-override');
+  if(existing) existing.remove();
+  css.textContent=`.wx-rain-tile{filter:${styles[mode]||styles.default} !important}`;
+  document.head.appendChild(css);
 }
 
 function removeSlider(){
@@ -741,7 +768,7 @@ async function toggleWx(type){
   if(type==='sat'){
     const frames=rvData.satellite?.infrared;
     if(!frames?.length){alert('衛星データなし');return;}
-    wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.5,maxZoom:14,zIndex:150}).addTo(map);
+    wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.6,maxZoom:14,zIndex:150,className:'wx-sat-tile'}).addTo(map);
     wxActive.sat=true;btn.classList.add('active');
   } else {
     if(!radarFrames.length){alert('レーダーデータなし');return;}
@@ -757,7 +784,7 @@ setInterval(async()=>{
   const ok=await fetchRainViewer();if(!ok)return;
   if(wxActive.sat){
     const frames=rvData.satellite?.infrared;
-    if(frames?.length){if(wxLayers.sat)map.removeLayer(wxLayers.sat);wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.5,maxZoom:14,zIndex:150}).addTo(map);}
+    if(frames?.length){if(wxLayers.sat)map.removeLayer(wxLayers.sat);wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.6,maxZoom:14,zIndex:150,className:'wx-sat-tile'}).addTo(map);}
   }
   if(wxActive.rain&&sliderEl){
     const wasLatest=currentFrameIdx>=radarFrames.length-2;
