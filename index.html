@@ -159,6 +159,7 @@ TRIPF 56460  EET  5.41"></textarea>
     <div class="mst" id="mst"></div>
     <div class="mbtns">
       <button class="mb" onclick="syncToGistSilent()">Gistへ保存</button>
+      <button class="mb" id="redraw-btn" onclick="redrawRoutes()" style="display:none">🔄 再描画</button>
       <button class="mb" onclick="closeMain()">閉じる</button>
       <button class="mb pri" id="go-btn" onclick="doGo()" disabled>解析して表示</button>
     </div>
@@ -349,48 +350,64 @@ async function fpdFetch(method, url, body, key) {
 }
 
 // Decode a full route string via FPD API
-async function fpdDecode(routeStr){
-  console.log('→ fpdDecode sending:', routeStr);
-  const data=await fpdFetch('POST','https://api.flightplandatabase.com/auto/decode',{route:routeStr});
-  
-  // data.waypoints は件数(数値)のみ。実際のウェイポイントはdata.idで別途取得が必要
-  // encodedPolylineからデコードする方法を使う
-  const planId = data.id;
-  console.log(`→ plan id: ${planId}, waypoints count: ${data.waypoints}`);
-  
-  if(!planId) return [];
-  
-  // フライトプランの詳細を取得
-  const detail = await fpdFetch('GET', `https://api.flightplandatabase.com/plan/${planId}`);
-  console.log('→ plan detail keys:', Object.keys(detail));
-  
-  const wps = detail.route?.nodes || detail.waypoints || detail.nodes || [];
-  console.log(`→ got ${wps.length} waypoints from plan detail`);
-  if(wps.length > 0) console.log('→ first wp:', JSON.stringify(wps[0]));
-  
-  return wps.map(n=>({
-    ident: n.ident || n.name || n.icao || '',
-    lat: n.lat || n.latitude || 0,
-    lon: n.lon || n.longitude || n.lng || 0,
-    type: n.type || 'WPT',
-    name: n.name || n.ident || ''
-  })).filter(n=>n.lat&&n.lon);
+// FPD /nav/fix で個別WPTの座標を取得
+// 内蔵DB/Gist/Cacheで解決できなかったものだけAPIを呼ぶ
+async function fpdResolveFix(ident){
+  const url=`https://api.flightplandatabase.com/nav/fix?ident=${encodeURIComponent(ident)}&types=Fix,VOR,NDB,Airport`;
+  const data=await fpdFetch('GET', url);
+  if(!Array.isArray(data)||data.length===0) return null;
+  // 最初のヒットを使う（地理的に最も近いものを選ぶのが理想だが簡略化）
+  const n=data[0];
+  return {
+    ident: n.ident||ident,
+    lat: n.lat||n.latitude||0,
+    lon: n.lon||n.longitude||0,
+    type: n.type||'WPT',
+    name: n.name||n.ident||ident
+  };
 }
 
-async function resolveRouteFPD(routeStr){
-  const nodes=await fpdDecode(routeStr);
-  const c=getCache();
-  for(const n of nodes){
-    if(n.ident&&n.lat&&n.lon&&!FIXED[n.ident]){
-      c[n.ident]=[n.lat,n.lon,n.type,n.name];
+// ルートのWPTリストをFPDで解決（未知のWPTのみAPIを呼ぶ）
+async function resolveRouteFPD(rawWps){
+  const nodes=[];
+  const toFetch=rawWps.filter(id=>!lookup(id));
+  console.log(`→ resolveRouteFPD: ${rawWps.length} wps, ${toFetch.length} need FPD lookup`);
+
+  // 未知WPTをFPDで一括解決
+  const fetched={};
+  for(const id of toFetch){
+    try{
+      const n=await fpdResolveFix(id);
+      if(n&&n.lat&&n.lon){
+        fetched[id]=n;
+        console.log(`  FPD found: ${id} = ${n.lat.toFixed(4)}N ${n.lon.toFixed(4)}E`);
+      } else {
+        console.warn(`  FPD not found: ${id}`);
+      }
+    }catch(e){
+      console.warn(`  FPD error for ${id}:`,e.message);
     }
   }
-  saveCache(c);
-  // FPD取得WPTのうちGist未登録のものを自動保存
-  autoSaveFPDWaypointsToGist(nodes).catch(()=>{});
-  const pts=nodes.map(n=>({lat:n.lat,lon:n.lon,type:n.type,name:n.ident,est:false})).filter(n=>n.lat&&n.lon);
-  console.log(`→ resolveRouteFPD: ${pts.length} valid points`);
-  return pts;
+
+  // キャッシュに保存
+  if(Object.keys(fetched).length>0){
+    const c=getCache();
+    for(const [id,n] of Object.entries(fetched)){
+      c[id]=[n.lat,n.lon,n.type,n.name];
+    }
+    saveCache(c);
+    // Gistにも自動保存
+    autoSaveFPDWaypointsToGist(Object.values(fetched)).catch(()=>{});
+  }
+
+  // 全WPTを座標に変換
+  for(const id of rawWps){
+    const d=lookup(id)||fetched[id]&&[fetched[id].lat,fetched[id].lon,fetched[id].type,fetched[id].name];
+    if(d) nodes.push({lat:d[0],lon:d[1],type:d[2]||'WPT',name:id,est:false});
+    else console.warn(`  No coords for: ${id}`);
+  }
+  console.log(`→ resolveRouteFPD done: ${nodes.length}/${rawWps.length} points resolved`);
+  return nodes.filter(n=>n.lat&&n.lon);
 }
 
 // ═══════════════════════════════════════════════
@@ -898,6 +915,19 @@ function openMain(){
   document.getElementById('m-main').classList.add('on');
   setSt('');
   updateUserWPList();
+  // ルートが既にある場合は再描画ボタンを表示
+  document.getElementById('redraw-btn').style.display = ROUTES.length ? 'inline-block' : 'none';
+}
+
+// WPT登録後などに呼ぶ再描画（FPD不要、現在のWPTDBで引き直す）
+function redrawRoutes(){
+  if(!ROUTES.length){ setSt('先にルートを読み込んでください'); return; }
+  setSt('再描画中...');
+  // _ptsキャッシュをクリアして再解決
+  ROUTES.forEach(r=>{ r._pts=null; });
+  renderRoutes();
+  setSt('✓ 再描画しました');
+  setTimeout(()=>setSt(''), 2000);
 }
 function closeMain(){document.getElementById('m-main').classList.remove('on');}
 function setSt(s){document.getElementById('mst').textContent=s;}
@@ -971,16 +1001,16 @@ async function doGo(){
         setProg(pct);setSt(`(${i+1}/${routes.length}) ${r.label} を解析中...`);
         if(i<TEST_LIMIT){
           try{
-            console.log(`FPD route ${r.label}:`, r.fpdRoute);
-            const pts=await resolveRouteFPD(r.fpdRoute);
+            console.log(`FPD route ${r.label}: resolving ${r.rawWps.length} wps`);
+            const pts=await resolveRouteFPD(r.rawWps);
             if(pts.length>=2) r._pts=pts;
             else {
-              console.warn('FPD returned too few points, using local DB');
+              console.warn('FPD resolved too few points, using local DB');
               r._pts=resolveRouteLocal(r);
             }
           }catch(e){
             console.warn('FPD failed for',r.label,e.message);
-            r._pts=resolveRouteLocal(r);  // Gist保存WPTはlookup()内で使用される
+            r._pts=resolveRouteLocal(r);
           }
         } else {
           r._pts=resolveRouteLocal(r);
@@ -1054,12 +1084,9 @@ function saveUserWPFromUI(){
   if(localStorage.getItem('gist_id')&&localStorage.getItem('gist_token')){
     syncToGist().catch(()=>{});
   }
-  // 登録後すぐに再描画（FPD不要）
-  if(ROUTES.length){
-    ROUTES.forEach(r=>{ r._pts=null; }); // キャッシュクリアして再解決
-    renderRoutes();
-  }
-  setSt(`✓ ${ident} を登録しました (${lat.toFixed(4)}N, ${lon.toFixed(4)}E)`);
+  setSt(`✓ ${ident} を登録しました (${lat.toFixed(4)}N, ${lon.toFixed(4)}E) — 「再描画」で反映`);
+  // 再描画ボタンを表示
+  if(ROUTES.length) document.getElementById('redraw-btn').style.display='inline-block';
 }
 
 function updateUserWPList(){
