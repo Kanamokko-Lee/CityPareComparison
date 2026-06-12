@@ -102,9 +102,21 @@ textarea:focus{border-color:var(--hi)}
   <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
     <button class="hbtn wxbtn" id="btn-sat" onclick="toggleWx('sat')" title="衛星雲画像">☁</button>
     <button class="hbtn wxbtn" id="btn-rain" onclick="toggleWx('rain')" title="降水エコー">🌧</button>
+    <button class="hbtn" onclick="openMapPicker()" title="地図切替">🗺</button>
   </div>
   <button class="hbtn" onclick="openMain()">📋 入力</button>
   <button class="hbtn" onclick="openSettings()">⚙</button>
+</div>
+
+<!-- ══ MAP PICKER MODAL ══ -->
+<div class="modal" id="m-map">
+  <div class="mbox" style="max-width:420px">
+    <h2>🗺 地図の種類</h2>
+    <div id="map-tiles-list" style="display:flex;flex-direction:column;gap:8px;margin-top:4px"></div>
+    <div class="mbtns" style="margin-top:12px">
+      <button class="mb pri" onclick="closeMapPicker()">閉じる</button>
+    </div>
+  </div>
 </div>
 <div id="map">
   <svg id="lsvg"></svg>
@@ -515,9 +527,125 @@ function parseRoutes(text){
 // MAP
 // ═══════════════════════════════════════════════
 const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionControl:false});
-// 明るめのダークベースマップ（地名ラベルを別レイヤーで上書き）
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',{maxZoom:14,opacity:0.75}).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{maxZoom:14,zIndex:10}).addTo(map);
+// 地図タイルは applyMapTile() で管理 - 起動時に適用
+// (map_tile_idがlocalStorageに保存されていれば復元)
+
+// ═══════════════════════════════════════════════
+// 地図タイル切替
+// ═══════════════════════════════════════════════
+const MAP_TILES = [
+  {
+    id: 'carto-dark',
+    name: 'CartoDB Dark',
+    desc: '暗い都市地図（デフォルト）',
+    layers: [
+      {url:'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,opacity:0.75}},
+      {url:'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,zIndex:10}},
+    ]
+  },
+  {
+    id: 'carto-light',
+    name: 'CartoDB Light',
+    desc: '明るいシンプル地図',
+    layers: [
+      {url:'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,opacity:0.85}},
+      {url:'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,zIndex:10}},
+    ]
+  },
+  {
+    id: 'esri-satellite',
+    name: 'Esri 衛星写真',
+    desc: '実際の衛星画像（海・陸・地形）',
+    layers: [
+      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,attribution:'Esri'}},
+    ]
+  },
+  {
+    id: 'esri-sat-labels',
+    name: 'Esri 衛星写真＋地名',
+    desc: '衛星写真に地名・国境を重ねたもの',
+    layers: [
+      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17}},
+      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,zIndex:10}},
+    ]
+  },
+  {
+    id: 'esri-street',
+    name: 'Esri 道路地図',
+    desc: '明るい詳細道路地図',
+    layers: [
+      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,opacity:0.85}},
+    ]
+  },
+  {
+    id: 'stadia-dark',
+    name: 'Stadia Dark',
+    desc: '洗練されたダークテーマ',
+    layers: [
+      {url:'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', opts:{maxZoom:18,opacity:0.85}},
+    ]
+  },
+  {
+    id: 'osm',
+    name: 'OpenStreetMap',
+    desc: '標準OSMマップ（カラー）',
+    layers: [
+      {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opts:{maxZoom:14,opacity:0.85}},
+    ]
+  },
+  {
+    id: 'topo',
+    name: 'OpenTopoMap',
+    desc: '地形図（山・海の起伏）',
+    layers: [
+      {url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', opts:{maxZoom:14,opacity:0.85}},
+    ]
+  },
+  {
+    id: 'esri-topo',
+    name: 'Esri 地形図',
+    desc: '地形・起伏・地名が詳細',
+    layers: [
+      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,opacity:0.85}},
+    ]
+  },
+];
+
+let currentMapId = localStorage.getItem('map_tile_id') || 'carto-dark';
+let baseLayers = [];
+
+function applyMapTile(id){
+  // Remove existing base layers
+  baseLayers.forEach(l => map.removeLayer(l));
+  baseLayers = [];
+  const tile = MAP_TILES.find(t => t.id === id) || MAP_TILES[0];
+  tile.layers.forEach(ldef => {
+    const l = L.tileLayer(ldef.url, ldef.opts).addTo(map);
+    baseLayers.push(l);
+  });
+  currentMapId = id;
+  localStorage.setItem('map_tile_id', id);
+  // Update picker UI if open
+  document.querySelectorAll('.map-tile-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.id === id);
+  });
+}
+
+function openMapPicker(){
+  const list = document.getElementById('map-tiles-list');
+  list.innerHTML = MAP_TILES.map(t => `
+    <button class="map-tile-btn hbtn" data-id="${t.id}"
+      onclick="applyMapTile('${t.id}')"
+      style="text-align:left;width:100%;padding:9px 12px;display:flex;flex-direction:column;gap:2px;${currentMapId===t.id?'background:#1a4a20;border-color:#40e090;color:#40e090':''}">
+      <span style="font-size:0.9rem;font-weight:700">${t.name}</span>
+      <span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);font-weight:normal">${t.desc}</span>
+    </button>
+  `).join('');
+  document.getElementById('m-map').classList.add('on');
+}
+function closeMapPicker(){ document.getElementById('m-map').classList.remove('on'); }
+
+// ESCキーでmap pickerも閉じる（既存ESCハンドラに追加）
 
 // ═══════════════════════════════════════════════
 // 気象レイヤー (RainViewer API)
@@ -1087,6 +1215,7 @@ document.addEventListener('keydown',function(e){
   if(e.key!=='Escape') return;
   if(document.getElementById('m-main').classList.contains('on')) closeMain();
   if(document.getElementById('m-settings').classList.contains('on')) closeSettings();
+  if(document.getElementById('m-map').classList.contains('on')) closeMapPicker();
 });
 
 // FPDから取得したWPTをGistに自動保存（未登録のものだけ追加）
@@ -1119,7 +1248,8 @@ function clearCache(){
 }
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
-// 起動時: nav_extra.json + Gist WPT を読み込んでからモーダルを開く
+// 起動時: 地図タイルを適用してからデータ読込
+applyMapTile(currentMapId);
 Promise.all([
   loadExtra(),
   syncFromGist().catch(()=>{})
