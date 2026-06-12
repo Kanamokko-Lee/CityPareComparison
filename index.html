@@ -146,6 +146,7 @@ TRIPF 56460  EET  5.41"></textarea>
     <div class="prog-wrap" id="prog-wrap"><div class="prog-bar" id="prog-bar"></div></div>
     <div class="mst" id="mst"></div>
     <div class="mbtns">
+      <button class="mb" onclick="syncToGistSilent()">Gistへ保存</button>
       <button class="mb" onclick="closeMain()">閉じる</button>
       <button class="mb pri" id="go-btn" onclick="doGo()" disabled>解析して表示</button>
     </div>
@@ -183,9 +184,11 @@ TRIPF 56460  EET  5.41"></textarea>
       <div class="key-status" id="gist-status"></div>
     </div>
       <div class="setting-desc" id="cache-desc">取得済みウェイポイント: 読込中...</div>
-      <button class="mb" style="margin-top:6px;width:fit-content" onclick="clearCache()">キャッシュをクリア</button>
+      <div style="display:flex;gap:8px;margin-top:6px;justify-content:flex-end">
+        <button class="mb" onclick="clearCache()">キャッシュをクリア</button>
+        <button class="mb pri" onclick="closeSettings()">閉じる</button>
+      </div>
     </div>
-    <div class="mbtns"><button class="mb pri" onclick="closeSettings()">閉じる</button></div>
   </div>
 </div>
 
@@ -371,6 +374,8 @@ async function resolveRouteFPD(routeStr){
     }
   }
   saveCache(c);
+  // FPD取得WPTのうちGist未登録のものを自動保存
+  autoSaveFPDWaypointsToGist(nodes).catch(()=>{});
   const pts=nodes.map(n=>({lat:n.lat,lon:n.lon,type:n.type,name:n.ident,est:false})).filter(n=>n.lat&&n.lon);
   console.log(`→ resolveRouteFPD: ${pts.length} valid points`);
   return pts;
@@ -840,15 +845,19 @@ async function doGo(){
           try{
             console.log(`FPD route ${r.label}:`, r.fpdRoute);
             const pts=await resolveRouteFPD(r.fpdRoute);
-            if(pts.length>=2)r._pts=pts;
-            else r._pts=resolveRouteLocal(r);
+            if(pts.length>=2) r._pts=pts;
+            else {
+              console.warn('FPD returned too few points, using local DB');
+              r._pts=resolveRouteLocal(r);
+            }
           }catch(e){
-            console.warn('FPD failed for',r.label,e.message);
-            r._pts=resolveRouteLocal(r);
+            console.warn('FPD failed for',r.label,':',e.message,'
+Falling back to Gist+localDB');
+            r._pts=resolveRouteLocal(r);  // Gist保存WPTはlookup()内で使用される
           }
         } else {
           r._pts=resolveRouteLocal(r);
-          setSt(`(${i+1}/${routes.length}) ${r.label} はローカルDBで表示`);
+          setSt(`(${i+1}/${routes.length}) ${r.label} はローカルDB/Gistで表示`);
         }
       }
     } else {
@@ -1029,6 +1038,78 @@ async function syncFromGist(){
     setGistStatus('✓ '+Object.keys(wps).length+'件を読み込みました','ok');
   }catch(e){setGistStatus('✗ '+e.message,'err');}
 }
+
+// WPTが無い時はGistを消さない - 既存データにマージして保存
+async function syncToGistMerge(newWps){
+  const id=localStorage.getItem('gist_id');
+  const tok=localStorage.getItem('gist_token');
+  if(!id||!tok) return false;
+  try{
+    // 既存Gistデータを取得
+    const r=await fetch(`https://api.github.com/gists/${id}`,{
+      headers:{'Authorization':'token '+tok,'Accept':'application/vnd.github+json'}
+    });
+    let existing={};
+    if(r.ok){
+      const data=await r.json();
+      const file=data.files?.['waypoints.json'];
+      if(file) try{existing=JSON.parse(file.content);}catch{}
+    }
+    // マージ（新しいものを上書き、既存は保持）
+    const merged={...existing,...newWps};
+    // abc順ソート
+    const sorted={};
+    Object.keys(merged).sort().forEach(k=>sorted[k]=merged[k]);
+    const r2=await fetch(`https://api.github.com/gists/${id}`,{
+      method:'PATCH',
+      headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},
+      body:JSON.stringify({files:{'waypoints.json':{content:JSON.stringify(sorted,null,2)}}})
+    });
+    if(!r2.ok) throw new Error('HTTP '+r2.status);
+    console.log('Gist saved:',Object.keys(sorted).length,'waypoints');
+    return Object.keys(sorted).length;
+  }catch(e){console.warn('Gist sync failed:',e);return false;}
+}
+
+// 「Gistへ保存」ボタン用（入力モーダルから呼ぶ）
+async function syncToGistSilent(){
+  const userWPs=getUserWPs();
+  if(!localStorage.getItem('gist_id')||!localStorage.getItem('gist_token')){
+    setSt('⚙設定でGist IDとTokenを設定してください');return;
+  }
+  setSt('Gistに保存中...');
+  const count=await syncToGistMerge(userWPs);
+  if(count!==false) setSt('✓ Gistに'+count+'件保存しました');
+  else setSt('✗ Gist保存に失敗しました');
+}
+
+// ESCキーでモーダルを閉じる
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Escape') return;
+  if(document.getElementById('m-main').classList.contains('on')) closeMain();
+  if(document.getElementById('m-settings').classList.contains('on')) closeSettings();
+});
+
+// FPDから取得したWPTをGistに自動保存（未登録のものだけ追加）
+async function autoSaveFPDWaypointsToGist(nodes){
+  if(!localStorage.getItem('gist_id')||!localStorage.getItem('gist_token')) return;
+  const userWPs=getUserWPs();
+  const newWps={};
+  for(const n of nodes){
+    const ident=n.ident||n.name;
+    if(!ident||FIXED[ident]||userWPs[ident]) continue;
+    if(n.lat&&n.lon) newWps[ident]=[round5(n.lat),round5(n.lon),'WPT',ident];
+  }
+  if(Object.keys(newWps).length===0) return;
+  console.log('Auto-saving',Object.keys(newWps).length,'new FPD waypoints to Gist');
+  await syncToGistMerge({...userWPs,...newWps});
+  // localStorageにも保存
+  const allWPs={...userWPs,...newWps};
+  saveUserWPs(allWPs);
+  updateUserWPList();
+}
+function round5(v){return Math.round(v*100000)/100000;}
+
 function closeSettings(){document.getElementById('m-settings').classList.remove('on');}
 function updateCacheDesc(){
   document.getElementById('cache-desc').textContent='取得済みウェイポイント: '+cacheCount()+' 件';
