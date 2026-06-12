@@ -851,8 +851,7 @@ async function doGo(){
               r._pts=resolveRouteLocal(r);
             }
           }catch(e){
-            console.warn('FPD failed for',r.label,':',e.message,'
-Falling back to Gist+localDB');
+            console.warn('FPD failed for',r.label,e.message);
             r._pts=resolveRouteLocal(r);  // Gist保存WPTはlookup()内で使用される
           }
         } else {
