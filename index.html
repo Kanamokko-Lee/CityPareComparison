@@ -101,7 +101,9 @@ textarea:focus{border-color:var(--hi)}
   <h1 id="hdr-title">✈ CITYPAIR COMPARISON</h1>
   <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
     <button class="hbtn wxbtn" id="btn-sat" onclick="toggleWx('sat')" title="衛星雲画像">☁</button>
-    <button class="hbtn wxbtn" id="btn-rain" onclick="toggleWx('rain')" title="降水エコー">🌧</button>
+    <button class="hbtn wxbtn" id="btn-rain" onclick="toggleWx('rain')" title="降水エコー(RainViewer)">🌧</button>
+    <button class="hbtn wxbtn" id="btn-jma" onclick="toggleWx('jma')" title="気象庁レーダー">📡</button>
+    <button class="hbtn wxbtn" id="btn-ty" onclick="toggleTyphoon()" title="台風進路">🌀</button>
     <button class="hbtn" onclick="openMapPicker()" title="地図切替">🗺</button>
   </div>
   <button class="hbtn" onclick="openMain()">📋 入力</button>
@@ -594,14 +596,7 @@ const MAP_TILES = [
       {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,opacity:0.85}},
     ]
   },
-  {
-    id: 'stadia-dark',
-    name: 'Stadia Dark',
-    desc: '洗練されたダークテーマ',
-    layers: [
-      {url:'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', opts:{maxZoom:18,opacity:0.85}},
-    ]
-  },
+
   {
     id: 'osm',
     name: 'OpenStreetMap',
@@ -628,7 +623,7 @@ const MAP_TILES = [
   },
 ];
 
-let currentMapId = localStorage.getItem('map_tile_id') || 'carto-dark';
+let currentMapId = localStorage.getItem('map_tile_id') || 'carto-light';
 let baseLayers = [];
 
 function applyMapTile(id){
@@ -668,8 +663,8 @@ function closeMapPicker(){ document.getElementById('m-map').classList.remove('on
 // 気象レイヤー (RainViewer API)
 // カラースキーム 8=Dark_Sky: 弱→強 = 水色→緑→黄→赤
 // ═══════════════════════════════════════════════
-let wxLayers={sat:null,rain:null};
-let wxActive={sat:false,rain:false};
+let wxLayers={sat:null,rain:null,jma:null,jmaTimer:null};
+let wxActive={sat:false,rain:false,jma:false};
 let rvData=null;
 let radarFrames=[];
 let currentFrameIdx=-1;
@@ -733,6 +728,7 @@ function removeSlider(){
 }
 
 async function toggleWx(type){
+  if(type==='jma'){toggleWxJMA();return;}
   const btn=document.getElementById('btn-'+type);
   if(wxActive[type]){
     if(wxLayers[type]){map.removeLayer(wxLayers[type]);wxLayers[type]=null;}
@@ -770,6 +766,137 @@ setInterval(async()=>{
     else updateSliderUI();
   }
 },600000);
+
+// ═══════════════════════════════════════════════
+// 気象庁レーダー（非公式タイル）
+// ═══════════════════════════════════════════════
+async function getJMARadarTime(){
+  // 気象庁の最新レーダー時刻を取得
+  try{
+    const r=await fetch('https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json');
+    if(!r.ok) return null;
+    const data=await r.json();
+    // 最新の過去データ時刻
+    const past=data.filter(d=>d.basetime);
+    if(!past.length) return null;
+    return past[past.length-1].basetime; // 例: "20260612023000"
+  }catch(e){return null;}
+}
+
+async function toggleWxJMA(){
+  const btn=document.getElementById('btn-jma');
+  if(wxActive.jma){
+    if(wxLayers.jma){map.removeLayer(wxLayers.jma);wxLayers.jma=null;}
+    wxActive.jma=false;btn.classList.remove('active');return;
+  }
+  btn.textContent='📡…';
+  const t=await getJMARadarTime();
+  if(!t){alert('気象庁レーダーデータを取得できませんでした');btn.textContent='📡';return;}
+  // 気象庁降水ナウキャストタイル
+  const url=`https://www.jma.go.jp/bosai/jmatile/data/nowc/${t}/none/${t}/surf/hrpns/{z}/{x}/{y}.png`;
+  wxLayers.jma=L.tileLayer(url,{opacity:0.7,maxZoom:10,zIndex:210,
+    errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+  }).addTo(map);
+  wxActive.jma=true;btn.classList.add('active');btn.textContent='📡';
+  // 10分ごとに更新
+  if(!wxLayers.jmaTimer) wxLayers.jmaTimer=setInterval(async()=>{
+    if(!wxActive.jma)return;
+    const t2=await getJMARadarTime();
+    if(!t2)return;
+    if(wxLayers.jma) map.removeLayer(wxLayers.jma);
+    const url2=`https://www.jma.go.jp/bosai/jmatile/data/nowc/${t2}/none/${t2}/surf/hrpns/{z}/{x}/{y}.png`;
+    wxLayers.jma=L.tileLayer(url2,{opacity:0.7,maxZoom:10,zIndex:210,
+      errorTileUrl:'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+    }).addTo(map);
+  },600000);
+}
+
+// ═══════════════════════════════════════════════
+// 台風進路（気象庁API）
+// ═══════════════════════════════════════════════
+let typhoonLayers=[];
+let typhoonActive=false;
+
+async function toggleTyphoon(){
+  const btn=document.getElementById('btn-ty');
+  if(typhoonActive){
+    typhoonLayers.forEach(l=>map.removeLayer(l));typhoonLayers=[];
+    typhoonActive=false;btn.classList.remove('active');return;
+  }
+  btn.textContent='🌀…';
+  try{
+    // 気象庁台風情報API
+    const r=await fetch('https://www.jma.go.jp/bosai/typhoon/data/list.json');
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const list=await r.json();
+    const active=list.filter(t=>t.status==='active'||t.status==='潜在');
+    if(!active.length){
+      alert('現在、活動中の台風はありません');
+      btn.textContent='🌀';return;
+    }
+    for(const tc of active){
+      await drawTyphoon(tc.id);
+    }
+    typhoonActive=true;btn.classList.add('active');
+  }catch(e){
+    console.error('Typhoon error:',e);
+    alert('台風データを取得できませんでした: '+e.message);
+  }
+  btn.textContent='🌀';
+}
+
+async function drawTyphoon(tcId){
+  try{
+    const r=await fetch(`https://www.jma.go.jp/bosai/typhoon/data/${tcId}/forecast.json`);
+    if(!r.ok) return;
+    const data=await r.json();
+    const track=data.track||[];
+    const forecast=data.forecast||[];
+    const color='#ff4444';
+    const fcolor='#ff8800';
+
+    // 実績経路
+    if(track.length>=2){
+      const pts=track.map(p=>[p.lat,p.lon]).filter(p=>p[0]&&p[1]);
+      const l=L.polyline(pts,{color,weight:3,opacity:0.9}).addTo(map);
+      typhoonLayers.push(l);
+      // 現在位置マーカー
+      const cur=track[track.length-1];
+      if(cur){
+        const m=L.circleMarker([cur.lat,cur.lon],{
+          radius:12,color,fillColor:color,fillOpacity:0.3,weight:3
+        }).bindPopup(
+          `<div class="pn">🌀 ${data.name||tcId}</div>`+
+          `<div class="ps">最大風速: ${cur.wind_speed||'?'} kt<br>`+
+          `中心気圧: ${cur.pressure||'?'} hPa</div>`
+        ).addTo(map);
+        typhoonLayers.push(m);
+      }
+    }
+    // 予報経路
+    if(forecast.length>=1){
+      const curPt=track.length?[track[track.length-1].lat,track[track.length-1].lon]:null;
+      const fpts=forecast.map(p=>[p.lat,p.lon]).filter(p=>p[0]&&p[1]);
+      if(curPt&&fpts.length){
+        const fl=L.polyline([curPt,...fpts],{color:fcolor,weight:2,opacity:0.8,dashArray:'8,5'}).addTo(map);
+        typhoonLayers.push(fl);
+        // 予報円
+        forecast.forEach(p=>{
+          if(!p.lat||!p.lon) return;
+          const radius=(p.forecast_circle||0)*1852; // nautical miles to meters
+          if(radius>0){
+            const c=L.circle([p.lat,p.lon],{radius,color:fcolor,fillColor:fcolor,fillOpacity:0.05,weight:1}).addTo(map);
+            typhoonLayers.push(c);
+          }
+          const fm=L.circleMarker([p.lat,p.lon],{radius:6,color:fcolor,fillColor:fcolor,fillOpacity:0.5,weight:2})
+            .bindPopup(`<div class="ps">${p.time||''}<br>風速: ${p.wind_speed||'?'} kt</div>`).addTo(map);
+          typhoonLayers.push(fm);
+        });
+      }
+    }
+  }catch(e){console.warn('drawTyphoon error:',e);}
+}
+
 let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
 
 function resolveRouteLocal(r){
@@ -919,13 +1046,14 @@ function openMain(){
   document.getElementById('redraw-btn').style.display = ROUTES.length ? 'inline-block' : 'none';
 }
 
-// WPT登録後などに呼ぶ再描画（FPD不要、現在のWPTDBで引き直す）
+// WPT登録後などに呼ぶ再描画（FPD不要、現在のWPTDB+Gistで引き直す）
 function redrawRoutes(){
   if(!ROUTES.length){ setSt('先にルートを読み込んでください'); return; }
   setSt('再描画中...');
-  // _ptsキャッシュをクリアして再解決
-  ROUTES.forEach(r=>{ r._pts=null; });
+  // rawWpsからローカルDBで再解決（FPDキャッシュも使用）
+  ROUTES.forEach(r=>{ r._pts = resolveRouteLocal(r); });
   renderRoutes();
+  closeMain();
   setSt('✓ 再描画しました');
   setTimeout(()=>setSt(''), 2000);
 }
