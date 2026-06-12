@@ -156,6 +156,18 @@ TRIPF 56460  EET  5.41"></textarea>
       <div class="setting-desc" id="cache-desc">取得済みウェイポイント: 読込中...</div>
       <button class="mb" style="margin-top:6px;width:fit-content" onclick="clearCache()">キャッシュをクリア</button>
     </div>
+    <div class="setting-row">
+      <div class="setting-label">ウェイポイント座標の登録・修正</div>
+      <div class="setting-desc">FPDのデータが間違っている場合や未登録のウェイポイントを手動で登録できます。ここに登録した座標が最優先で使われます。</div>
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <input id="wp-ident" placeholder="識別子 (例: BILLY)" style="width:100px;background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:5px 8px;outline:none">
+        <input id="wp-lat" placeholder="緯度 (例: 33.607)" style="width:110px;background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:5px 8px;outline:none">
+        <input id="wp-lon" placeholder="経度 (例: 137.612)" style="width:110px;background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:5px 8px;outline:none">
+        <button class="mb" onclick="saveUserWPFromUI()">登録</button>
+      </div>
+      <div class="setting-desc" style="margin-top:4px">N33 36.4 E137 36.7 形式でも入力できます</div>
+      <div id="user-wp-list" style="margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);max-height:120px;overflow-y:auto"></div>
+    </div>
     <div class="mbtns"><button class="mb pri" onclick="closeSettings()">閉じる</button></div>
   </div>
 </div>
@@ -179,6 +191,7 @@ const FIXED={
   SAMUS:[33.83889,140.21806,'WPT','SAMUS (JP ENR-4.3)'],
   PIGOK:[35.31509,139.93212,'WPT','PIGOK (JP ENR-4.3)'],
   AKSEL:[34.67764,139.85748,'WPT','AKSEL (JP ENR-4.3)'],
+  BILLY:[33.60667,137.61167,'WPT','BILLY (N33 36.4 E137 36.7)'],
   VETOM:[10.90,107.30,'WPT','VETOM(推定)'],
   DOVIN:[11.30,107.80,'WPT','DOVIN(推定)'],
   MADRU:[19.40,116.30,'WPT','MADRU(推定)'],
@@ -191,6 +204,17 @@ const FIXED={
   W12:  [13.30,109.00,'WPT','W12(推定)'],
   Q1:   [11.80,108.00,'WPT','Q1(推定)'],
 };
+
+// ユーザー登録ウェイポイント（設定画面から追加可能、localStorageに永続保存）
+const USER_WP_KEY='user_waypoints_v1';
+function getUserWPs(){try{return JSON.parse(localStorage.getItem(USER_WP_KEY)||'{}');}catch{return {};}}
+function saveUserWPs(db){try{localStorage.setItem(USER_WP_KEY,JSON.stringify(db));}catch{}}
+function addUserWP(ident,lat,lon,name){
+  const db=getUserWPs();
+  db[ident.toUpperCase()]=[lat,lon,'WPT',name||ident];
+  saveUserWPs(db);
+  console.log(`UserWP saved: ${ident} = ${lat},${lon}`);
+}
 let DB=null;
 function loadDB(){
   if(DB)return;DB={};
@@ -215,7 +239,10 @@ function cacheCount(){return Object.keys(getCache()).length;}
 
 function lookup(id){
   if(FIXED[id])return FIXED[id];
-  if(EXTRA[id])return EXTRA[id];         // GitHub Actions生成DBを優先
+  // ユーザー登録WP（最優先で上書き可能）
+  const userWPs=getUserWPs();
+  if(userWPs[id])return userWPs[id];
+  if(EXTRA[id])return EXTRA[id];
   const cache=getCache();
   if(cache[id])return cache[id];
   if(!DB)loadDB();
@@ -223,6 +250,12 @@ function lookup(id){
 }
 function cacheWaypoint(id,data){
   const c=getCache();c[id]=data;saveCache(c);
+}
+
+// APIキー: localStorageとsessionStorageの両方に保存
+// キャッシュクリアでlocalStorageが消えてもsessionStorageが残る
+function getApiKey(){
+  return localStorage.getItem('fpd_api_key')||sessionStorage.getItem('fpd_api_key')||'';
 }
 
 // ═══════════════════════════════════════════════
@@ -240,6 +273,7 @@ function saveKey(){
   const v=document.getElementById('key-input').value.trim();
   if(!v){setKeyStatus('キーを入力してください','err');return;}
   localStorage.setItem('fpd_api_key',v);
+  sessionStorage.setItem('fpd_api_key',v);  // キャッシュクリア後もセッション中は残る
   document.getElementById('key-input').value='';
   document.getElementById('key-input').placeholder='変更する場合は新しいキーを入力...';
   setKeyStatus('✓ 保存しました（'+v.slice(0,6)+'...）','ok');
@@ -404,24 +438,17 @@ function parseRoutes(text){
     }
     const optText=optL.join(' ');
 
-    // FPDルート文字列構築
-    // トークン条件:
-    //   - /Fxxx, /Rxxx 等スラッシュ付き → 除外
-    //   - 純粋数字 → 除外
-    //   - CI値(数字のみ先頭) → 除外
-    //   - SKIP_WP → 除外
-    //   - 残り = ウェイポイント(3or5文字アルファ) or 航空路(英字+数字) → FPDに渡す
-    const fpdTokens=['RJAA'];
+    // FPDルート文字列構築（出発・到着空港なし、ウェイポイント+航路名のみ）
+    const fpdTokens=[];
     for(const tok of optText.split(/\s+/)){
-      if(!tok||tok.startsWith('/'))continue;        // /F400等除外
+      if(!tok||tok.startsWith('/'))continue;
       const t=tok.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
       if(!t||t.length<2||t.length>6)continue;
       if(SKIP_WP.has(t))continue;
-      if(/^\d+$/.test(t))continue;                 // 純粋数字除外
-      if(/^\d/.test(t))continue;                   // 数字始まり除外(70等)
+      if(/^\d+$/.test(t))continue;
+      if(/^\d/.test(t))continue;
       fpdTokens.push(t);
     }
-    fpdTokens.push('VVTS');
     const fpdRoute=fpdTokens.join(' ');
     console.log(`VRNT${id} FPD:`, fpdRoute);
 
@@ -543,14 +570,26 @@ function renderRoutes(){
   ROUTES.forEach(r=>{
     if(!r._pts||!r._pts.length)r._pts=resolveRouteLocal(r);
     if(!r._pts.length)return;
-    const poly=L.polyline(r._pts.map(p=>[p.lat,p.lon]),{color:r.color,weight:5,opacity:.80,dashArray:r.dash,lineJoin:'round',lineCap:'round'}).addTo(map);
+    // weight:2 で細め、ズームしても線の太さはピクセル固定（Leafletのデフォルト動作）
+    const poly=L.polyline(r._pts.map(p=>[p.lat,p.lon]),{
+      color:r.color, weight:2, opacity:.9,
+      dashArray:r.dash, lineJoin:'round', lineCap:'round'
+    }).addTo(map);
     poly.on('click',()=>selRoute(r.id));polys[r.id]=poly;
     r._pts.forEach(p=>{
       if(drawn.has(p.name))return;drawn.add(p.name);
       const isA=p.type==='APT',isV=p.type==='VOR';
       const col=p.est?'#667':isV?'#ffd860':isA?'#80d8ff':'#5599cc';
-      L.circleMarker([p.lat,p.lon],{radius:isA?9:isV?6:4,color:col,fillColor:isA?'#1a4060':'#0a1420',fillOpacity:.9,weight:isA?2.5:1.5})
-       .addTo(map).bindPopup('<div class="pn">'+p.name+'</div><div class="ps">'+p.type+(p.est?' 推定':'')+'</div><div class="ps">'+p.lat.toFixed(4)+'°N &nbsp;'+p.lon.toFixed(4)+'°E</div>',{maxWidth:200});
+      // CircleMarkerはズーム不変（Markerと異なりピクセル固定）
+      L.circleMarker([p.lat,p.lon],{
+        radius:isA?6:isV?4:3,
+        color:col, fillColor:isA?'#1a4060':'#0a1420', fillOpacity:.9, weight:1.5
+      }).addTo(map).bindPopup(
+        '<div class="pn">'+p.name+'</div>'+
+        '<div class="ps">'+p.type+(p.est?' 推定':'')+'</div>'+
+        '<div class="ps">'+p.lat.toFixed(4)+'°N &nbsp;'+p.lon.toFixed(4)+'°E</div>',
+        {maxWidth:200}
+      );
     });
   });
   placeLabels();
@@ -696,17 +735,63 @@ async function ocrImage(b64,mime){
   }
 }
 
-// ═══════════════════════════════════════════════
-// SETTINGS MODAL
-// ═══════════════════════════════════════════════
+// ユーザーWP登録UI
+function saveUserWPFromUI(){
+  const ident=document.getElementById('wp-ident').value.trim().toUpperCase();
+  let latStr=document.getElementById('wp-lat').value.trim();
+  let lonStr=document.getElementById('wp-lon').value.trim();
+  if(!ident||!latStr||!lonStr){alert('識別子・緯度・経度を入力してください');return;}
+
+  // N33 36.4 形式も対応
+  function parseDegMin(s){
+    s=s.replace(/[NS]/i,'').trim();
+    const parts=s.split(/\s+/);
+    if(parts.length===2) return parseFloat(parts[0])+parseFloat(parts[1])/60;
+    return parseFloat(s);
+  }
+  const lat=parseDegMin(latStr);
+  const lon=parseDegMin(lonStr);
+  if(isNaN(lat)||isNaN(lon)){alert('座標の形式が正しくありません');return;}
+
+  addUserWP(ident,lat,lon,ident);
+  document.getElementById('wp-ident').value='';
+  document.getElementById('wp-lat').value='';
+  document.getElementById('wp-lon').value='';
+  updateUserWPList();
+  alert(`${ident} を登録しました (${lat.toFixed(4)}N, ${lon.toFixed(4)}E)`);
+}
+
+function updateUserWPList(){
+  const el=document.getElementById('user-wp-list');
+  if(!el)return;
+  const db=getUserWPs();
+  const keys=Object.keys(db);
+  if(!keys.length){el.textContent='登録なし';return;}
+  el.innerHTML=keys.map(k=>{
+    const v=db[k];
+    return `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--accent)">${k}</span>
+      <span>${v[0].toFixed(4)}N ${v[1].toFixed(4)}E</span>
+      <span style="cursor:pointer;color:var(--worst)" onclick="deleteUserWP('${k}')">✕</span>
+    </div>`;
+  }).join('');
+}
+
+function deleteUserWP(ident){
+  const db=getUserWPs();
+  delete db[ident];
+  saveUserWPs(db);
+  updateUserWPList();
+}
 function openSettings(){
   document.getElementById('m-settings').classList.add('on');
   const k=getApiKey();
   const inp=document.getElementById('key-input');
-  inp.value='';  // 常に空欄で開く
+  inp.value='';
   inp.placeholder=k?'変更する場合は新しいキーを入力...':'APIキーをここに貼り付け...';
   setKeyStatus(k?'✓ APIキー設定済み（'+k.slice(0,6)+'...）— 確認ボタンで有効性をチェック':'未設定', k?'ok':'err');
   updateCacheDesc();
+  updateUserWPList();
 }
 function closeSettings(){document.getElementById('m-settings').classList.remove('on');}
 function updateCacheDesc(){
