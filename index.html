@@ -586,22 +586,22 @@ function placeLabels(){
   });
 }
 
-// ズームレベルに応じた線の太さ・マーカーサイズを計算
-function zoomWeight(base){ const z=map.getZoom(); return Math.max(1, base*(z/6)); }
-function zoomRadius(base){ const z=map.getZoom(); return Math.max(2, base*(z/6)); }
-
-// マーカーを再描画（ズーム後に呼ばれる）
-function redrawMarkers(){
-  map.eachLayer(l=>{ if(l instanceof L.CircleMarker) map.removeLayer(l); });
-  const drawn=new Set();
+function renderRoutes(){
+  loadDB();clearAll();
   ROUTES.forEach(r=>{
-    if(!r._pts) return;
+    if(!r._pts||!r._pts.length) r._pts=resolveRouteLocal(r);
+    if(!r._pts.length) return;
+    const poly=L.polyline(r._pts.map(p=>[p.lat,p.lon]),{
+      color:r.color, weight:2, opacity:.85,
+      dashArray:r.dash, lineJoin:'round', lineCap:'round'
+    }).addTo(map);
+    poly.on('click',()=>selRoute(r.id));
+    polys[r.id]=poly;
     r._pts.forEach(p=>{
-      if(drawn.has(p.name)) return; drawn.add(p.name);
       const isA=p.type==='APT', isV=p.type==='VOR';
       const col=p.est?'#667':isV?'#ffd860':isA?'#80d8ff':'#5599cc';
       L.circleMarker([p.lat,p.lon],{
-        radius: zoomRadius(isA?4:isV?3:2),
+        radius:isA?5:isV?3:2,
         color:col, fillColor:isA?'#1a4060':'#0a1420', fillOpacity:.9, weight:1
       }).addTo(map).bindPopup(
         '<div class="pn">'+p.name+'</div>'+
@@ -611,38 +611,9 @@ function redrawMarkers(){
       );
     });
   });
-  // 線の太さも更新
-  ROUTES.forEach(r=>{
-    if(!polys[r.id]) return;
-    const isSelected = selId===r.id;
-    const w = isSelected ? zoomWeight(4) : zoomWeight(1.5);
-    const op = isSelected ? 1.0 : (hidden.has(r.id)?0:0.8);
-    polys[r.id].setStyle({weight:w, opacity:op});
-  });
-}
-
-let zoomTimer=null;
-
-function renderRoutes(){
-  loadDB();clearAll();
-  ROUTES.forEach(r=>{
-    if(!r._pts||!r._pts.length) r._pts=resolveRouteLocal(r);
-    if(!r._pts.length) return;
-    const poly=L.polyline(r._pts.map(p=>[p.lat,p.lon]),{
-      color:r.color, weight:zoomWeight(1.5), opacity:.8,
-      dashArray:r.dash, lineJoin:'round', lineCap:'round'
-    }).addTo(map);
-    poly.on('click',()=>selRoute(r.id));
-    polys[r.id]=poly;
-  });
-  redrawMarkers();
   placeLabels();
   map.off('moveend zoomend resize');
-  map.on('zoomend',()=>{
-    clearTimeout(zoomTimer);
-    zoomTimer=setTimeout(()=>{ redrawMarkers(); placeLabels(); },300);
-  });
-  map.on('moveend resize',placeLabels);
+  map.on('moveend zoomend resize', placeLabels);
   setTimeout(()=>selRoute(ROUTES[0]?.id),150);
 }
 
@@ -652,8 +623,8 @@ function selRoute(id){
   ROUTES.forEach(x=>{
     if(!polys[x.id]||hidden.has(x.id))return;
     polys[x.id].setStyle(x.id===id
-      ?{opacity:1, weight:zoomWeight(4)}
-      :{opacity:.45, weight:zoomWeight(1.5)});
+      ?{opacity:1, weight:4}
+      :{opacity:.45, weight:1.5});
   });
   Object.entries(labelEls).forEach(([rid,el])=>el.classList.toggle('sel',parseInt(rid)===id));
   if(polys[id])map.fitBounds(polys[id].getBounds(),{padding:[50,50]});
