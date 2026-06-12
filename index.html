@@ -510,75 +510,114 @@ function parseRoutes(text){
 // MAP
 // ═══════════════════════════════════════════════
 const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionControl:false});
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:14}).addTo(map);
+// 明るめのダークベースマップ（地名ラベルを別レイヤーで上書き）
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',{maxZoom:14,opacity:0.75}).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{maxZoom:14,zIndex:10}).addTo(map);
 
 // ═══════════════════════════════════════════════
 // 気象レイヤー (RainViewer API)
+// カラースキーム 8=Dark_Sky: 弱→強 = 水色→緑→黄→赤
 // ═══════════════════════════════════════════════
 let wxLayers={sat:null,rain:null};
 let wxActive={sat:false,rain:false};
 let rvData=null;
+let radarFrames=[];
+let currentFrameIdx=-1;
+let sliderEl=null;
+const RAIN_COLOR=8; // Dark_Sky
+const TILE_SZ=256;
 
 async function fetchRainViewer(){
   try{
     const r=await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    if(!r.ok) throw new Error('HTTP '+r.status);
     rvData=await r.json();
-  }catch(e){console.warn('RainViewer fetch failed:',e);}
+    radarFrames=rvData.radar?.past||[];
+    return true;
+  }catch(e){console.warn('RainViewer:',e);return false;}
 }
 
-function getRainViewerTile(type){
-  if(!rvData) return null;
-  if(type==='sat'){
-    // 衛星雲画像: satellite.infrared の最新フレーム
-    const frames=rvData.satellite?.infrared;
-    if(!frames||!frames.length) return null;
-    const latest=frames[frames.length-1];
-    return rvData.host+latest.path+'/256/{z}/{x}/{y}/0/0_0.png';
-  } else {
-    // 降水エコー: radar の最新フレーム
-    const frames=rvData.radar?.past;
-    if(!frames||!frames.length) return null;
-    const latest=frames[frames.length-1];
-    return rvData.host+latest.path+'/256/{z}/{x}/{y}/4/1_1.png';
-  }
+function buildRadarUrl(frame){
+  return rvData.host+frame.path+'/'+TILE_SZ+'/{z}/{x}/{y}/'+RAIN_COLOR+'/1_1.png';
+}
+function buildSatUrl(frame){
+  return rvData.host+frame.path+'/'+TILE_SZ+'/{z}/{x}/{y}/0/0_0.png';
+}
+
+function showRadarFrame(idx){
+  if(!radarFrames.length)return;
+  idx=Math.max(0,Math.min(idx,radarFrames.length-1));
+  currentFrameIdx=idx;
+  if(wxLayers.rain){map.removeLayer(wxLayers.rain);wxLayers.rain=null;}
+  wxLayers.rain=L.tileLayer(buildRadarUrl(radarFrames[idx]),{opacity:0.75,maxZoom:14,zIndex:200}).addTo(map);
+  updateSliderUI();
+}
+
+function updateSliderUI(){
+  if(!sliderEl||!radarFrames.length)return;
+  sliderEl.max=radarFrames.length-1;
+  sliderEl.value=currentFrameIdx;
+  const d=new Date(radarFrames[currentFrameIdx].time*1000);
+  const lbl=document.getElementById('wx-time-label');
+  if(lbl) lbl.textContent=d.toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})+' UTC';
+}
+
+function createSlider(){
+  if(document.getElementById('wx-slider-wrap'))return;
+  const wrap=document.createElement('div');
+  wrap.id='wx-slider-wrap';
+  wrap.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+12px);left:50%;transform:translateX(-50%);z-index:600;background:rgba(8,13,24,0.9);border:1px solid var(--hi);border-radius:10px;padding:7px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);min-width:260px;max-width:90vw';
+  wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">🌧 過去</span>
+    <input id="wx-slider" type="range" min="0" max="${radarFrames.length-1}" value="${currentFrameIdx}" step="1" style="flex:1;accent-color:#40e090;cursor:pointer" oninput="showRadarFrame(parseInt(this.value))">
+    <span id="wx-time-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:55px;text-align:right"></span>
+    <button onclick="removeSlider()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;line-height:1;padding:0 2px">✕</button>`;
+  document.body.appendChild(wrap);
+  sliderEl=document.getElementById('wx-slider');
+  updateSliderUI();
+}
+
+function removeSlider(){
+  const w=document.getElementById('wx-slider-wrap');
+  if(w)w.remove();
+  sliderEl=null;
 }
 
 async function toggleWx(type){
   const btn=document.getElementById('btn-'+type);
   if(wxActive[type]){
-    // オフ
     if(wxLayers[type]){map.removeLayer(wxLayers[type]);wxLayers[type]=null;}
     wxActive[type]=false;
     btn.classList.remove('active');
+    if(type==='rain')removeSlider();
     return;
   }
-  // データ取得（まだなければ）
-  if(!rvData) await fetchRainViewer();
-  const url=getRainViewerTile(type);
-  if(!url){alert('気象データを取得できませんでした');return;}
-  wxLayers[type]=L.tileLayer(url,{
-    opacity: type==='sat'?0.6:0.7,
-    maxZoom:14,
-    attribution:'RainViewer'
-  }).addTo(map);
-  wxActive[type]=true;
-  btn.classList.add('active');
+  if(!rvData){const ok=await fetchRainViewer();if(!ok){alert('気象データ取得失敗\napi.rainviewer.com');return;}}
+  if(type==='sat'){
+    const frames=rvData.satellite?.infrared;
+    if(!frames?.length){alert('衛星データなし');return;}
+    wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.5,maxZoom:14,zIndex:150}).addTo(map);
+    wxActive.sat=true;btn.classList.add('active');
+  } else {
+    if(!radarFrames.length){alert('レーダーデータなし');return;}
+    currentFrameIdx=radarFrames.length-1;
+    showRadarFrame(currentFrameIdx);
+    wxActive.rain=true;btn.classList.add('active');
+    createSlider();
+  }
 }
 
-// 10分ごとに気象データ自動更新
 setInterval(async()=>{
-  if(!wxActive.sat&&!wxActive.rain) return;
-  await fetchRainViewer();
-  for(const type of ['sat','rain']){
-    if(!wxActive[type]) continue;
-    const url=getRainViewerTile(type);
-    if(!url) continue;
-    if(wxLayers[type]) map.removeLayer(wxLayers[type]);
-    wxLayers[type]=L.tileLayer(url,{
-      opacity:type==='sat'?0.6:0.7,
-      maxZoom:14,
-      attribution:'RainViewer'
-    }).addTo(map);
+  if(!wxActive.sat&&!wxActive.rain)return;
+  const ok=await fetchRainViewer();if(!ok)return;
+  if(wxActive.sat){
+    const frames=rvData.satellite?.infrared;
+    if(frames?.length){if(wxLayers.sat)map.removeLayer(wxLayers.sat);wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.5,maxZoom:14,zIndex:150}).addTo(map);}
+  }
+  if(wxActive.rain&&sliderEl){
+    const wasLatest=currentFrameIdx>=radarFrames.length-2;
+    sliderEl.max=radarFrames.length-1;
+    if(wasLatest)showRadarFrame(radarFrames.length-1);
+    else updateSliderUI();
   }
 },600000);
 let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
