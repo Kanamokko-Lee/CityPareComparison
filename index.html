@@ -97,7 +97,7 @@ textarea:focus{border-color:var(--hi)}
 </head>
 <body>
 <div id="hdr">
-  <h1>✈ JL759 &nbsp; NRT → SGN</h1>
+  <h1 id="hdr-title">✈ CITYPAIR COMPARISON</h1>
   <button class="hbtn" onclick="openMain()">📋 入力</button>
   <button class="hbtn" onclick="openSettings()">⚙</button>
 </div>
@@ -459,17 +459,22 @@ function parseRoutes(text){
       const t=tok.replace(/[^A-Za-z]/g,'').toUpperCase();
       if(t.length!==3&&t.length!==5)continue;
       if(SKIP_WP.has(t))continue;
-      if(/\d/.test(tok))continue;                  // 元トークンに数字があれば航路名→除外
+      if(/\d/.test(tok))continue;
       if(/^[A-Z]+$/.test(t))wps.push(t);
     }
+
+    // FPDには最初と最後のウェイポイントを出発・到着として使う
+    const fpdFull = wps.length>=2
+      ? wps[0]+' '+fpdRoute+' '+wps[wps.length-1]
+      : fpdRoute;
 
     const i=routes.length;
     routes.push({
       id, label:'VRNT '+id, via,
       color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
       tripf:num('TRIPF'), time:numF('EET'),
-      fpdRoute,
-      rawWps:['NRT',...wps.filter(w=>w!=='NRT'&&w!=='SGN'),'SGN']
+      fpdRoute:fpdFull,
+      rawWps:[...wps]  // NRT/SGNなし、テキストに書かれたWPそのまま
     });
   }
   routes.sort((a,b)=>a.id-b.id);
@@ -702,6 +707,11 @@ async function doGo(){
     }
 
     ROUTES=routes;hidden.clear();selId=null;
+    // ヘッダーをルート情報で更新（フライト番号はテキストから取得）
+    const flightM=rawText.match(/([A-Z]{2}\d{3,4}[-\d]*)/);
+    const routeM=rawText.match(/,\s*([A-Z]{3,4}-[A-Z]{3,4})/);
+    const flightInfo=(flightM?flightM[1]:'')+(routeM?' '+routeM[1]:'');
+    document.getElementById('hdr-title').textContent='✈ '+(flightInfo||'CITYPAIR COMPARISON');
     setProg(100);setSt('');
     closeMain();
     renderRoutes();
