@@ -1081,14 +1081,43 @@ function openMain(){
 function redrawRoutes(){
   if(!ROUTES.length){ setSt('先にルートを読み込んでください'); return; }
   setSt('再描画中...');
-  // 現在の地図の表示範囲・拡大率を保持
-  const curCenter=map.getCenter();
-  const curZoom=map.getZoom();
   // rawWpsからローカルDBで再解決
   ROUTES.forEach(r=>{ r._pts = resolveRouteLocal(r); });
-  renderRoutes(false); // fitBoundsしない
-  // 地図の表示位置を元に戻す
-  map.setView(curCenter, curZoom, {animate:false});
+  // ポリラインとマーカーだけ引き直す（地図ビューは変えない）
+  Object.values(polys).forEach(p=>map.removeLayer(p)); polys={};
+  map.eachLayer(l=>{ if(l instanceof L.CircleMarker) map.removeLayer(l); });
+  const drawn=new Set();
+  ROUTES.forEach(r=>{
+    if(!r._pts||!r._pts.length) return;
+    const freshPts=r._pts.map(p=>{
+      const d=lookup(p.name);
+      if(d) return {...p,lat:d[0],lon:d[1],type:d[2]||p.type};
+      return p;
+    });
+    r._pts=freshPts;
+    const poly=L.polyline(freshPts.map(p=>[p.lat,p.lon]),{
+      color:r.color,weight:2,opacity:.85,dashArray:r.dash,lineJoin:'round',lineCap:'round'
+    }).addTo(map);
+    poly.on('click',()=>selRoute(r.id));
+    polys[r.id]=poly;
+    freshPts.forEach(p=>{
+      if(drawn.has(p.name)) return; drawn.add(p.name);
+      const isA=p.type==='APT',isV=p.type==='VOR';
+      const col=isV?'#ffd860':isA?'#80d8ff':'#5599cc';
+      L.circleMarker([p.lat,p.lon],{radius:isA?5:isV?3:2,
+        color:col,fillColor:isA?'#1a4060':'#0a1420',fillOpacity:.9,weight:1
+      }).addTo(map).bindPopup(
+        '<div class="pn">'+p.name+'</div>'+
+        '<div class="ps">'+p.type+'</div>'+
+        '<div class="ps">'+p.lat.toFixed(4)+'°N &nbsp;'+p.lon.toFixed(4)+'°E</div>',
+        {maxWidth:200}
+      );
+    });
+  });
+  // selRouteでスタイル更新（fitBoundsなし）
+  selRoute(selId||ROUTES[0]?.id, false);
+  // placeLabelsは少し遅らせる（地図が安定してから）
+  setTimeout(placeLabels, 100);
   closeMain();
   setSt('✓ 再描画しました');
   setTimeout(()=>setSt(''), 2000);
