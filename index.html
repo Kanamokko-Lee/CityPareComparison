@@ -1000,7 +1000,7 @@ function placeLabels(){
   });
 }
 
-function renderRoutes(){
+function renderRoutes(doFit=true){
   loadDB();clearAll();
   ROUTES.forEach(r=>{
     if(!r._pts||!r._pts.length) r._pts=resolveRouteLocal(r);
@@ -1039,11 +1039,12 @@ function renderRoutes(){
   let _zoomTimer=null;
   map.on('zoomend',()=>{clearTimeout(_zoomTimer);_zoomTimer=setTimeout(placeLabels,300);});
   map.on('moveend resize',placeLabels);
-  // 全ルートのboundsに合わせて表示（初回・新データ読込時）
-  const allPts=ROUTES.flatMap(r=>r._pts||[]).map(p=>[p.lat,p.lon]);
-  if(allPts.length) map.fitBounds(allPts,{padding:[60,60]});
+  // 全ルートのboundsに合わせて表示（初回・新データ読込時のみ）
+  if(doFit){
+    const allPts=ROUTES.flatMap(r=>r._pts||[]).map(p=>[p.lat,p.lon]);
+    if(allPts.length) map.fitBounds(allPts,{padding:[60,60]});
+  }
   setTimeout(()=>{
-    // fitBounds後にselRouteを呼ぶ（ただしfitBoundsはしない）
     selRoute(ROUTES[0]?.id, false);
   },150);
 }
@@ -1079,9 +1080,14 @@ function openMain(){
 function redrawRoutes(){
   if(!ROUTES.length){ setSt('先にルートを読み込んでください'); return; }
   setSt('再描画中...');
-  // rawWpsからローカルDBで再解決（FPDキャッシュも使用）
+  // 現在の地図の表示範囲・拡大率を保持
+  const curCenter=map.getCenter();
+  const curZoom=map.getZoom();
+  // rawWpsからローカルDBで再解決
   ROUTES.forEach(r=>{ r._pts = resolveRouteLocal(r); });
-  renderRoutes();
+  renderRoutes(false); // fitBoundsしない
+  // 地図の表示位置を元に戻す
+  map.setView(curCenter, curZoom, {animate:false});
   closeMain();
   setSt('✓ 再描画しました');
   setTimeout(()=>setSt(''), 2000);
