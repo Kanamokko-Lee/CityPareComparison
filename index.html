@@ -1041,8 +1041,9 @@ function renderRoutes(doFit=true){
   map.on('moveend resize',placeLabels);
   // 全ルートのboundsに合わせて表示（初回・新データ読込時のみ）
   if(doFit){
-    const allPts=ROUTES.flatMap(r=>r._pts||[]).map(p=>[p.lat,p.lon]);
-    if(allPts.length) map.fitBounds(allPts,{padding:[60,60]});
+    const bounds=L.latLngBounds();
+    ROUTES.forEach(r=>(r._pts||[]).forEach(p=>bounds.extend([p.lat,p.lon])));
+    if(bounds.isValid()) map.fitBounds(bounds,{padding:[60,60],animate:false});
   }
   setTimeout(()=>{
     selRoute(ROUTES[0]?.id, false);
