@@ -1039,10 +1039,16 @@ function renderRoutes(){
   let _zoomTimer=null;
   map.on('zoomend',()=>{clearTimeout(_zoomTimer);_zoomTimer=setTimeout(placeLabels,300);});
   map.on('moveend resize',placeLabels);
-  setTimeout(()=>selRoute(ROUTES[0]?.id),150);
+  // 全ルートのboundsに合わせて表示（初回・新データ読込時）
+  const allPts=ROUTES.flatMap(r=>r._pts||[]).map(p=>[p.lat,p.lon]);
+  if(allPts.length) map.fitBounds(allPts,{padding:[60,60]});
+  setTimeout(()=>{
+    // fitBounds後にselRouteを呼ぶ（ただしfitBoundsはしない）
+    selRoute(ROUTES[0]?.id, false);
+  },150);
 }
 
-function selRoute(id){
+function selRoute(id, doFit=true){
   if(!id)return; selId=id;
   const r=ROUTES.find(x=>x.id===id); if(!r)return;
   ROUTES.forEach(x=>{
@@ -1052,7 +1058,7 @@ function selRoute(id){
       :{opacity:.45, weight:1.5});
   });
   Object.entries(labelEls).forEach(([rid,el])=>el.classList.toggle('sel',parseInt(rid)===id));
-  if(polys[id])map.fitBounds(polys[id].getBounds(),{padding:[50,50]});
+  if(doFit&&polys[id])map.fitBounds(polys[id].getBounds(),{padding:[50,50]});
   document.getElementById('ibar').textContent=r.label+' · '+r.via+' · TRIPF '+r.tripf.toLocaleString()+' / EET '+eet(r.time);
 }
 
