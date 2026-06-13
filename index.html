@@ -427,10 +427,10 @@ function sanitize(pts){
   if(pts.length<=2)return pts;
   const out=[pts[0]];
   for(let i=1;i<pts.length;i++){
-    const prev=out[out.length-1],cur=pts[i],nxt=pts[i+1];
+    const prev=out[out.length-1],cur=pts[i];
     const d=gcNm([prev.lat,prev.lon],[cur.lat,cur.lon]);
-    if(d>900)continue;
-    if(nxt){const s=gcNm([prev.lat,prev.lon],[nxt.lat,nxt.lon]);if(s>20&&(d+gcNm([cur.lat,cur.lon],[nxt.lat,nxt.lon]))/s>3)continue;}
+    // 2000nm以上は明らかに異常（地球半周）なのでスキップ
+    if(d>2000)continue;
     out.push(cur);
   }
   return out;
