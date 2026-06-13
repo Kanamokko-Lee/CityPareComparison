@@ -1034,20 +1034,31 @@ function renderRoutes(doFit=true){
     // _ptsも最新化しておく
     r._pts = freshPts;
   });
-  placeLabels();
+  // イベントハンドラを設定
   map.off('moveend zoomend resize');
   let _zoomTimer=null;
   map.on('zoomend',()=>{clearTimeout(_zoomTimer);_zoomTimer=setTimeout(placeLabels,300);});
   map.on('moveend resize',placeLabels);
-  // 全ルートのboundsに合わせて表示（初回・新データ読込時のみ）
+
   if(doFit){
+    // fitBounds後に地図が安定してからplaceLabels
     const bounds=L.latLngBounds();
     ROUTES.forEach(r=>(r._pts||[]).forEach(p=>bounds.extend([p.lat,p.lon])));
-    if(bounds.isValid()) map.fitBounds(bounds,{padding:[60,60],animate:false});
+    if(bounds.isValid()){
+      map.once('moveend',()=>{
+        placeLabels();
+        setTimeout(()=>selRoute(ROUTES[0]?.id, false),50);
+      });
+      map.fitBounds(bounds,{padding:[60,60],animate:false});
+    } else {
+      placeLabels();
+      setTimeout(()=>selRoute(ROUTES[0]?.id, false),50);
+    }
+  } else {
+    // fitBoundsしない場合もplaceLabels（現在のビューで）
+    placeLabels();
+    setTimeout(()=>selRoute(ROUTES[0]?.id, false),50);
   }
-  setTimeout(()=>{
-    selRoute(ROUTES[0]?.id, false);
-  },150);
 }
 
 function selRoute(id, doFit=true){
@@ -1116,8 +1127,15 @@ function redrawRoutes(){
   });
   // selRouteでスタイル更新（fitBoundsなし）
   selRoute(selId||ROUTES[0]?.id, false);
-  // placeLabelsは少し遅らせる（地図が安定してから）
-  setTimeout(placeLabels, 100);
+  // fitBoundsしてから地図が安定した後にplaceLabels
+  const bounds=L.latLngBounds();
+  ROUTES.forEach(r=>(r._pts||[]).forEach(p=>bounds.extend([p.lat,p.lon])));
+  if(bounds.isValid()){
+    map.once('moveend',()=>placeLabels());
+    map.fitBounds(bounds,{padding:[60,60],animate:false});
+  } else {
+    placeLabels();
+  }
   closeMain();
   setSt('✓ 再描画しました');
   setTimeout(()=>setSt(''), 2000);
