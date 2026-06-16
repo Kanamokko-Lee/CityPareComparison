@@ -23,6 +23,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .hbtn{background:#0f2a45;border:1px solid var(--hi);border-radius:6px;padding:7px 12px;font-family:'Share Tech Mono',monospace;font-size:0.8rem;color:var(--accent);cursor:pointer;flex-shrink:0}
 .hbtn:hover{background:#162f52}
 .hbtn.active{background:#1a4a20;border-color:#40e090;color:#40e090}
+.map-tile-btn.active{border-color:var(--accent)!important;color:var(--accent)!important;background:#1a4060!important}
 #map{position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px));left:0;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:1}
 .leaflet-container{background:#04080f}
 .leaflet-tile{filter:brightness(.55) saturate(.35) hue-rotate(195deg)}
@@ -536,116 +537,59 @@ function parseRoutes(text){
 // MAP
 // ═══════════════════════════════════════════════
 const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionControl:false});
-// 地図タイルは applyMapTile() で管理 - 起動時に適用
-// (map_tile_idがlocalStorageに保存されていれば復元)
+// 地図タイルは setMapStyle() で管理 - 起動時に適用
 
 // ═══════════════════════════════════════════════
-// 地図タイル切替
+// 地図タイル切替 (MAP_STYLES)
 // ═══════════════════════════════════════════════
-const MAP_TILES = [
-  {
-    id: 'carto-dark',
-    name: 'CartoDB Dark',
-    desc: '暗い都市地図（デフォルト）',
-    layers: [
-      {url:'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,opacity:0.75}},
-      {url:'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,zIndex:10}},
-    ]
-  },
-  {
-    id: 'carto-light',
-    name: 'CartoDB Light',
-    desc: '明るいシンプル地図',
-    layers: [
-      {url:'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,opacity:0.85}},
-      {url:'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', opts:{maxZoom:14,zIndex:10}},
-    ]
-  },
-  {
-    id: 'esri-satellite',
-    name: 'Esri 衛星写真',
-    desc: '実際の衛星画像（海・陸・地形）',
-    layers: [
-      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,attribution:'Esri'}},
-    ]
-  },
-  {
-    id: 'esri-sat-labels',
-    name: 'Esri 衛星写真＋地名',
-    desc: '衛星写真に地名・国境を重ねたもの',
-    layers: [
-      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17}},
-      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,zIndex:10}},
-    ]
-  },
-  {
-    id: 'esri-street',
-    name: 'Esri 道路地図',
-    desc: '明るい詳細道路地図',
-    layers: [
-      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,opacity:0.85}},
-    ]
-  },
-
-  {
-    id: 'osm',
-    name: 'OpenStreetMap',
-    desc: '標準OSMマップ（カラー）',
-    layers: [
-      {url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', opts:{maxZoom:14,opacity:0.85}},
-    ]
-  },
-  {
-    id: 'topo',
-    name: 'OpenTopoMap',
-    desc: '地形図（山・海の起伏）',
-    layers: [
-      {url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', opts:{maxZoom:14,opacity:0.85}},
-    ]
-  },
-  {
-    id: 'esri-topo',
-    name: 'Esri 地形図',
-    desc: '地形・起伏・地名が詳細',
-    layers: [
-      {url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:17,opacity:0.85}},
-    ]
-  },
+const MAP_STYLES=[
+  {label:'🗺 地図（Voyager）', url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
+  {label:'🛰 衛星写真（Esri）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Imagery'},
+  {label:'🌑 ダーク（CARTO）', url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
+  {label:'💡 ライト（CARTO）', url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
+  {label:'🏔 地形図（OpenTopo）', url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', sub:'abc', attr:'&copy; OpenTopoMap (CC-BY-SA)'},
+  {label:'🛣 道路地図（Esri）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Street Map'},
+  {label:'🗾 地形詳細（Esri Topo）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Topo Map'},
 ];
+let currentMapStyle = parseInt(localStorage.getItem('cpc_map_style') ?? '2');
+let baseTileLayer = null;
 
-let currentMapId = localStorage.getItem('map_tile_id') || 'carto-light';
-let baseLayers = [];
-
-function applyMapTile(id){
-  // Remove existing base layers
-  baseLayers.forEach(l => map.removeLayer(l));
-  baseLayers = [];
-  const tile = MAP_TILES.find(t => t.id === id) || MAP_TILES[0];
-  tile.layers.forEach(ldef => {
-    const l = L.tileLayer(ldef.url, ldef.opts).addTo(map);
-    baseLayers.push(l);
-  });
-  currentMapId = id;
-  localStorage.setItem('map_tile_id', id);
-  // Update picker UI if open
-  document.querySelectorAll('.map-tile-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.id === id);
-  });
+function setMapStyle(idx){
+  currentMapStyle = idx;
+  localStorage.setItem('cpc_map_style', String(idx));
+  document.querySelectorAll('#map-tiles-list .map-tile-btn')
+    .forEach((b,i) => b.classList.toggle('active', i===idx));
+  if(!map) return;
+  if(baseTileLayer) map.removeLayer(baseTileLayer);
+  const s = MAP_STYLES[idx];
+  const opts = {attribution: s.attr, maxZoom: 18};
+  if(s.sub) opts.subdomains = s.sub;
+  baseTileLayer = L.tileLayer(s.url, opts).addTo(map);
+  baseTileLayer.bringToBack();
+  closeMapPicker();
 }
 
 function openMapPicker(){
   const list = document.getElementById('map-tiles-list');
-  list.innerHTML = MAP_TILES.map(t => `
-    <button class="map-tile-btn hbtn" data-id="${t.id}"
-      onclick="applyMapTile('${t.id}')"
-      style="text-align:left;width:100%;padding:9px 12px;display:flex;flex-direction:column;gap:2px;${currentMapId===t.id?'background:#1a4a20;border-color:#40e090;color:#40e090':''}">
-      <span style="font-size:0.9rem;font-weight:700">${t.name}</span>
-      <span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);font-weight:normal">${t.desc}</span>
-    </button>
-  `).join('');
+  list.innerHTML = '';
+  MAP_STYLES.forEach((s, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'mb map-tile-btn' + (i===currentMapStyle ? ' active' : '');
+    btn.style.cssText = 'text-align:left;width:100%;padding:9px 12px;display:flex;flex-direction:column;gap:2px;';
+    btn.innerHTML = '<span style="font-size:0.9rem;font-weight:700">'+s.label+'</span>';
+    btn.onclick = () => setMapStyle(i);
+    list.appendChild(btn);
+  });
   document.getElementById('m-map').classList.add('on');
 }
 function closeMapPicker(){ document.getElementById('m-map').classList.remove('on'); }
+
+// NASA GIBS 衛星時刻ヘルパー
+function gibsTime(delayMin){
+  const t = new Date(Date.now() - delayMin * 60000);
+  t.setUTCMinutes(Math.floor(t.getUTCMinutes()/10)*10, 0, 0);
+  return t.toISOString().replace('.000Z','Z');
+}
 
 // ESCキーでmap pickerも閉じる（既存ESCハンドラに追加）
 
@@ -755,7 +699,12 @@ async function toggleWx(type){
   if(type==='sat'){
     const frames=rvData.satellite?.infrared;
     if(!frames?.length){alert('衛星データなし');return;}
-    wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.6,maxZoom:14,zIndex:150,className:'wx-sat-tile'}).addTo(map);
+    // NASA GIBS Himawari-9 赤外（24時間利用可能）
+    const gibsT=gibsTime(70);
+    wxLayers.sat=L.tileLayer(
+      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+      {opacity:0.85,maxZoom:6,zIndex:150,className:'wx-sat-tile',attribution:'NASA GIBS / Himawari-9'}
+    ).addTo(map);
     wxActive.sat=true;btn.classList.add('active');
   } else {
     if(!radarFrames.length){alert('レーダーデータなし');return;}
@@ -771,7 +720,14 @@ setInterval(async()=>{
   const ok=await fetchRainViewer();if(!ok)return;
   if(wxActive.sat){
     const frames=rvData.satellite?.infrared;
-    if(frames?.length){if(wxLayers.sat)map.removeLayer(wxLayers.sat);wxLayers.sat=L.tileLayer(buildSatUrl(frames[frames.length-1]),{opacity:0.6,maxZoom:14,zIndex:150,className:'wx-sat-tile'}).addTo(map);}
+    if(wxLayers.sat){
+      map.removeLayer(wxLayers.sat);
+      const gibsT2=gibsTime(70);
+      wxLayers.sat=L.tileLayer(
+        `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT2}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+        {opacity:0.85,maxZoom:6,zIndex:150,className:'wx-sat-tile',attribution:'NASA GIBS / Himawari-9'}
+      ).addTo(map);
+    }
   }
   if(wxActive.rain&&sliderEl){
     const wasLatest=currentFrameIdx>=radarFrames.length-2;
@@ -1487,7 +1443,7 @@ function clearCache(){
 
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 // 起動時: 地図タイルを適用してからデータ読込
-applyMapTile(currentMapId);
+setMapStyle(currentMapStyle);
 Promise.all([
   loadExtra(),
   syncFromGist().catch(()=>{})
