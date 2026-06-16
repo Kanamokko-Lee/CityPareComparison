@@ -689,7 +689,7 @@ function createIRSlider(){
   if(document.getElementById('ir-slider-wrap')) return;
   const wrap=document.createElement('div');
   wrap.id='ir-slider-wrap';
-  wrap.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+52px);left:50%;transform:translateX(-50%);z-index:600;background:rgba(8,13,24,0.9);border:1px solid var(--hi);border-radius:10px;padding:7px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);min-width:220px;max-width:90vw';
+  wrap.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+12px);right:10px;z-index:600;background:rgba(8,13,24,0.9);border:1px solid var(--hi);border-radius:10px;padding:7px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);width:220px';
   wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">☁ 濃度</span>
     <input id="ir-opacity-slider" type="range" min="0" max="100" value="75" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
     <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">75%</span>
