@@ -702,8 +702,8 @@ function createIRSlider(){
   wrap.id='ir-slider-wrap';
   wrap.style.cssText='position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:800;background:rgba(8,13,24,0.92);border:1px solid var(--hi);border-radius:10px;padding:6px 14px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);min-width:200px;max-width:80vw';
   wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">☁ 濃度</span>
-    <input id="ir-opacity-slider" type="range" min="0" max="100" value="60" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
-    <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">60%</span>
+    <input id="ir-opacity-slider" type="range" min="0" max="100" value="50" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
+    <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">50%</span>
     <button onclick="removeIRSlider()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;line-height:1;padding:0 2px">✕</button>`;
   document.body.appendChild(wrap);
 }
@@ -744,7 +744,7 @@ async function toggleWx(type){
     const gibsTE=gibsTime(70);
     wxLayers.esri=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsTE}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.60, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.50, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.esri=true; btn.classList.add('active');
     if(coastlineLayer) coastlineLayer.setOpacity(0.6);
@@ -755,7 +755,7 @@ async function toggleWx(type){
       const t=gibsTime(70);
       wxLayers.esri=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.60, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.50, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
@@ -766,7 +766,7 @@ async function toggleWx(type){
     const gibsT=gibsTime(70);
     wxLayers.ir=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.60, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.50, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.ir=true; btn.classList.add('active');
     if(coastlineLayer) coastlineLayer.setOpacity(0.6);
@@ -778,7 +778,7 @@ async function toggleWx(type){
       const t=gibsTime(70);
       wxLayers.ir=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.60, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.50, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
@@ -873,19 +873,24 @@ async function toggleTyphoon(){
   }
   btn.textContent='🌀…';
   try{
-    // 気象庁台風情報API
-    const r=await fetch('https://www.jma.go.jp/bosai/typhoon/data/list.json');
+    // 気象庁台風情報API (正式エンドポイント)
+    const r=await fetch('https://www.jma.go.jp/bosai/information/data/typhoon.json');
     if(!r.ok) throw new Error('HTTP '+r.status);
     const list=await r.json();
-    const active=list.filter(t=>t.status==='active'||t.status==='潜在');
-    if(!active.length){
+    if(!list||!list.length){
       alert('現在、活動中の台風はありません');
       btn.textContent='🌀';return;
     }
-    for(const tc of active){
-      await drawTyphoon(tc.id);
+    console.log('Typhoon list:', JSON.stringify(list).slice(0,300));
+    for(const tc of list){
+      const eventId=tc.eventId||tc.id||tc;
+      if(eventId) await drawTyphoon(eventId);
     }
-    typhoonActive=true;btn.classList.add('active');
+    if(typhoonLayers.length>0){
+      typhoonActive=true;btn.classList.add('active');
+    } else {
+      alert('台風データを描画できませんでした');
+    }
   }catch(e){
     console.error('Typhoon error:',e);
     alert('台風データを取得できませんでした: '+e.message);
@@ -893,54 +898,56 @@ async function toggleTyphoon(){
   btn.textContent='🌀';
 }
 
-async function drawTyphoon(tcId){
+async function drawTyphoon(eventId){
   try{
-    const r=await fetch(`https://www.jma.go.jp/bosai/typhoon/data/${tcId}/forecast.json`);
-    if(!r.ok) return;
-    const data=await r.json();
-    const track=data.track||[];
-    const forecast=data.forecast||[];
+    // 正式API: specifications.json
+    const r=await fetch(`https://www.jma.go.jp/bosai/typhoon/data/${eventId}/specifications.json`);
+    if(!r.ok){ console.warn('Typhoon spec not found:', eventId, r.status); return; }
+    const spec=await r.json();
+    console.log('Typhoon spec:', JSON.stringify(spec).slice(0,400));
+
     const color='#ff4444';
     const fcolor='#ff8800';
+    const name=spec.nameJp||spec.nameEn||spec.name||eventId;
 
-    // 実績経路
-    if(track.length>=2){
-      const pts=track.map(p=>[p.lat,p.lon]).filter(p=>p[0]&&p[1]);
-      const l=L.polyline(pts,{color,weight:3,opacity:0.9}).addTo(map);
-      typhoonLayers.push(l);
-      // 現在位置マーカー
-      const cur=track[track.length-1];
-      if(cur){
-        const m=L.circleMarker([cur.lat,cur.lon],{
-          radius:12,color,fillColor:color,fillOpacity:0.3,weight:3
-        }).bindPopup(
-          `<div class="pn">🌀 ${data.name||tcId}</div>`+
-          `<div class="ps">最大風速: ${cur.wind_speed||'?'} kt<br>`+
-          `中心気圧: ${cur.pressure||'?'} hPa</div>`
-        ).addTo(map);
-        typhoonLayers.push(m);
-      }
+    // 実況点（現在位置）
+    const cur=spec.current||spec.analysis;
+    if(cur&&cur.lat&&cur.lon){
+      const m=L.circleMarker([cur.lat,cur.lon],{
+        radius:14,color,fillColor:color,fillOpacity:0.25,weight:3
+      }).bindPopup(
+        `<div class="pn">🌀 ${name}</div>`+
+        `<div class="ps">中心気圧: ${cur.pressure||'?'} hPa<br>`+
+        `最大風速: ${cur.maxWindSpeed||cur.wind||'?'} kt</div>`
+      ).addTo(map);
+      typhoonLayers.push(m);
     }
+
     // 予報経路
-    if(forecast.length>=1){
-      const curPt=track.length?[track[track.length-1].lat,track[track.length-1].lon]:null;
-      const fpts=forecast.map(p=>[p.lat,p.lon]).filter(p=>p[0]&&p[1]);
-      if(curPt&&fpts.length){
-        const fl=L.polyline([curPt,...fpts],{color:fcolor,weight:2,opacity:0.8,dashArray:'8,5'}).addTo(map);
-        typhoonLayers.push(fl);
+    const forecasts=spec.forecast||spec.forecasts||[];
+    const fpts=forecasts.filter(p=>p.lat&&p.lon).map(p=>[p.lat,p.lon]);
+    if(cur&&fpts.length){
+      const fl=L.polyline([[cur.lat,cur.lon],...fpts],{
+        color:fcolor,weight:2.5,opacity:0.85,dashArray:'10,6'
+      }).addTo(map);
+      typhoonLayers.push(fl);
+
+      forecasts.filter(p=>p.lat&&p.lon).forEach(p=>{
         // 予報円
-        forecast.forEach(p=>{
-          if(!p.lat||!p.lon) return;
-          const radius=(p.forecast_circle||0)*1852; // nautical miles to meters
-          if(radius>0){
-            const c=L.circle([p.lat,p.lon],{radius,color:fcolor,fillColor:fcolor,fillOpacity:0.05,weight:1}).addTo(map);
-            typhoonLayers.push(c);
-          }
-          const fm=L.circleMarker([p.lat,p.lon],{radius:6,color:fcolor,fillColor:fcolor,fillOpacity:0.5,weight:2})
-            .bindPopup(`<div class="ps">${p.time||''}<br>風速: ${p.wind_speed||'?'} kt</div>`).addTo(map);
-          typhoonLayers.push(fm);
-        });
-      }
+        const nm=p.forecastCircle||p.circle||p.radius||0;
+        if(nm>0){
+          const c=L.circle([p.lat,p.lon],{
+            radius:nm*1852,color:fcolor,fillColor:fcolor,fillOpacity:0.04,weight:1
+          }).addTo(map);
+          typhoonLayers.push(c);
+        }
+        const timeStr=p.validTime||p.time||'';
+        const label=timeStr?new Date(timeStr).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+        const fm=L.circleMarker([p.lat,p.lon],{
+          radius:5,color:fcolor,fillColor:fcolor,fillOpacity:0.7,weight:1.5
+        }).bindPopup(`<div class="ps">${label}<br>気圧: ${p.pressure||'?'} hPa<br>風速: ${p.maxWindSpeed||p.wind||'?'} kt</div>`).addTo(map);
+        typhoonLayers.push(fm);
+      });
     }
   }catch(e){console.warn('drawTyphoon error:',e);}
 }
