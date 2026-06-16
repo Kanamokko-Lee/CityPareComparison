@@ -27,6 +27,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #map{position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px));left:0;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:1}
 .leaflet-container{background:#04080f}
 .leaflet-tile{filter:none}
+.coastline-tile{filter:invert(1) brightness(0.7) !important}
 /* 降水エコーはRainViewerの色そのまま使用 */
 /* wx-sat-tile color applied via JS */
 .leaflet-control-zoom{border:1px solid var(--hi)!important}
@@ -537,6 +538,11 @@ function parseRoutes(text){
 // ═══════════════════════════════════════════════
 const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionControl:false});
 // 地図タイルは setMapStyle() で管理 - 起動時に適用
+// 海岸線強調レイヤー（常時表示、気象レイヤーより上）
+let coastlineLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  {opacity:0.0, maxZoom:17, zIndex:300, className:'coastline-tile'}
+).addTo(map);
 
 // ═══════════════════════════════════════════════
 // 地図タイル切替 (MAP_STYLES)
@@ -674,7 +680,8 @@ function applyRainFilter(mode){
   if(existing) existing.remove();
   css.textContent=`/* 降水エコーはRainViewerのカラー(colorScheme 6)使用 */
 /* 赤外雲画像エンハンスフィルター */
-.wx-ir-enhanced{filter:invert(1) hue-rotate(160deg) saturate(2.5) brightness(1.1) contrast(1.2) !important} !important}`;
+.wx-ir-enhanced{filter:invert(1) sepia(1) saturate(3) hue-rotate(330deg) brightness(0.9) contrast(1.3) !important}
+/* 赤外エンハンス: 高高度冷たい雲=赤/黒、中高度=黄色、低雲=白/グレー、晴天=暗 */ !important}`;
   document.head.appendChild(css);
 }
 
@@ -689,10 +696,10 @@ function createIRSlider(){
   if(document.getElementById('ir-slider-wrap')) return;
   const wrap=document.createElement('div');
   wrap.id='ir-slider-wrap';
-  wrap.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+12px);right:10px;z-index:600;background:rgba(8,13,24,0.9);border:1px solid var(--hi);border-radius:10px;padding:7px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);width:220px';
+  wrap.style.cssText='position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px) + 8px);left:50%;transform:translateX(-50%);z-index:800;background:rgba(8,13,24,0.92);border:1px solid var(--hi);border-radius:10px;padding:6px 14px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);min-width:200px;max-width:80vw';
   wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">☁ 濃度</span>
-    <input id="ir-opacity-slider" type="range" min="0" max="100" value="75" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
-    <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">75%</span>
+    <input id="ir-opacity-slider" type="range" min="0" max="100" value="60" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
+    <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">60%</span>
     <button onclick="removeIRSlider()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;line-height:1;padding:0 2px">✕</button>`;
   document.body.appendChild(wrap);
 }
@@ -720,8 +727,10 @@ async function toggleWx(type){
     btn.classList.remove('active');
     if(type==='rain') removeSlider();
     if(type==='esri'||type==='ir'){
-      // スライダーは両方OFFになったら消す
-      if(!wxActive.esri&&!wxActive.ir) removeIRSlider();
+      if(!wxActive.esri&&!wxActive.ir){
+        removeIRSlider();
+        if(coastlineLayer) coastlineLayer.setOpacity(0.0);
+      }
     }
     return;
   }
@@ -731,9 +740,10 @@ async function toggleWx(type){
     const gibsTE=gibsTime(70);
     wxLayers.esri=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsTE}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.75, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.60, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.esri=true; btn.classList.add('active');
+    if(coastlineLayer) coastlineLayer.setOpacity(0.6);
     createIRSlider();
     if(!wxLayers.esriTimer) wxLayers.esriTimer=setInterval(()=>{
       if(!wxActive.esri) return;
@@ -741,7 +751,7 @@ async function toggleWx(type){
       const t=gibsTime(70);
       wxLayers.esri=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.75, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.60, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
@@ -752,9 +762,10 @@ async function toggleWx(type){
     const gibsT=gibsTime(70);
     wxLayers.ir=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.75, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.60, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.ir=true; btn.classList.add('active');
+    if(coastlineLayer) coastlineLayer.setOpacity(0.6);
     createIRSlider();
     // 10分ごと自動更新
     if(!wxLayers.irTimer) wxLayers.irTimer=setInterval(()=>{
@@ -763,7 +774,7 @@ async function toggleWx(type){
       const t=gibsTime(70);
       wxLayers.ir=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.75, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.60, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
