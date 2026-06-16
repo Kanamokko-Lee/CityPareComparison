@@ -104,9 +104,9 @@ textarea:focus{border-color:var(--hi)}
 <div id="hdr">
   <h1 id="hdr-title">✈ CITYPAIR COMPARISON</h1>
   <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
-    <button class="hbtn wxbtn" id="btn-sat" onclick="toggleWx('sat')" title="衛星雲画像">☁</button>
     <button class="hbtn wxbtn" id="btn-rain" onclick="toggleWx('rain')" title="降水エコー(RainViewer)">🌧</button>
-    <button class="hbtn wxbtn" id="btn-jma" onclick="toggleWx('jma')" title="気象庁レーダー">📡</button>
+    <button class="hbtn wxbtn" id="btn-esri" onclick="toggleWx('esri')" title="Esri衛星写真オーバーレイ">📡</button>
+    <button class="hbtn wxbtn" id="btn-ir" onclick="toggleWx('ir')" title="赤外雲画像(Himawari)">☁</button>
     <button class="hbtn wxbtn" id="btn-ty" onclick="toggleTyphoon()" title="台風進路">🌀</button>
     <button class="hbtn" onclick="openMapPicker()" title="地図切替">🗺</button>
   </div>
@@ -597,8 +597,8 @@ function gibsTime(delayMin){
 // 気象レイヤー (RainViewer API)
 // カラースキーム 8=Dark_Sky: 弱→強 = 水色→緑→黄→赤
 // ═══════════════════════════════════════════════
-let wxLayers={sat:null,rain:null,jma:null,jmaTimer:null};
-let wxActive={sat:false,rain:false,jma:false};
+let wxLayers={rain:null,esri:null,ir:null,jma:null,jmaTimer:null};
+let wxActive={rain:false,esri:false,ir:false,jma:false};
 let rvData=null;
 let radarFrames=[];
 let currentFrameIdx=-1;
@@ -692,27 +692,48 @@ async function toggleWx(type){
     if(wxLayers[type]){map.removeLayer(wxLayers[type]);wxLayers[type]=null;}
     wxActive[type]=false;
     btn.classList.remove('active');
-    if(type==='rain')removeSlider();
+    if(type==='rain') removeSlider();
     return;
   }
-  if(!rvData){const ok=await fetchRainViewer();if(!ok){alert('気象データ取得失敗\napi.rainviewer.com');return;}}
-  if(type==='sat'){
-    const frames=rvData.satellite?.infrared;
-    if(!frames?.length){alert('衛星データなし');return;}
-    // NASA GIBS Himawari-9 赤外（24時間利用可能）
-    const gibsT=gibsTime(70);
-    wxLayers.sat=L.tileLayer(
-      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.85,maxZoom:6,zIndex:150,className:'wx-sat-tile',attribution:'NASA GIBS / Himawari-9'}
+
+  if(type==='esri'){
+    // Esri衛星写真をオーバーレイ（半透明）
+    wxLayers.esri=L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {opacity:0.75, maxZoom:17, zIndex:160, attribution:'Esri World Imagery'}
     ).addTo(map);
-    wxActive.sat=true;btn.classList.add('active');
-  } else {
-    if(!radarFrames.length){alert('レーダーデータなし');return;}
-    currentFrameIdx=radarFrames.length-1;
-    showRadarFrame(currentFrameIdx);
-    wxActive.rain=true;btn.classList.add('active');
-    createSlider();
+    wxActive.esri=true; btn.classList.add('active');
+    return;
   }
+
+  if(type==='ir'){
+    // Himawari赤外雲画像（NASA GIBS）
+    const gibsT=gibsTime(70);
+    wxLayers.ir=L.tileLayer(
+      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+      {opacity:0.85, maxZoom:6, zIndex:150, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+    ).addTo(map);
+    wxActive.ir=true; btn.classList.add('active');
+    // 10分ごと自動更新
+    if(!wxLayers.irTimer) wxLayers.irTimer=setInterval(()=>{
+      if(!wxActive.ir) return;
+      if(wxLayers.ir) map.removeLayer(wxLayers.ir);
+      const t=gibsTime(70);
+      wxLayers.ir=L.tileLayer(
+        `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+        {opacity:0.85, maxZoom:6, zIndex:150, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+      ).addTo(map);
+    },600000);
+    return;
+  }
+
+  // 🌧 rain
+  if(!rvData){const ok=await fetchRainViewer();if(!ok){alert('気象データ取得失敗');return;}}
+  if(!radarFrames.length){alert('レーダーデータなし');return;}
+  currentFrameIdx=radarFrames.length-1;
+  showRadarFrame(currentFrameIdx);
+  wxActive.rain=true; btn.classList.add('active');
+  createSlider();
 }
 
 setInterval(async()=>{
