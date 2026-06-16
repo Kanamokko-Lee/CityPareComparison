@@ -27,8 +27,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 #map{position:fixed;top:calc(var(--hdr) + env(safe-area-inset-top,0px));left:0;right:0;bottom:env(safe-area-inset-bottom,0px);z-index:1}
 .leaflet-container{background:#04080f}
 .leaflet-tile{filter:none}
-/* 気象レイヤーのtileは色調整 */
-.wx-rain-tile{filter:hue-rotate(180deg) saturate(2) brightness(1.4) contrast(1.3) !important}
+/* 降水エコーはRainViewerの色そのまま使用 */
 .wx-sat-tile{filter:invert(1) brightness(0.85) sepia(0.3) !important}
 .leaflet-control-zoom{border:1px solid var(--hi)!important}
 .leaflet-control-zoom a{background:#0b1220!important;color:var(--accent)!important;border-bottom:1px solid var(--border)!important;font-size:1.1rem!important}
@@ -543,15 +542,13 @@ const map=L.map('map',{center:[22,118],zoom:5,zoomControl:true,attributionContro
 // 地図タイル切替 (MAP_STYLES)
 // ═══════════════════════════════════════════════
 const MAP_STYLES=[
-  {label:'🗺 地図（Voyager）', url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
   {label:'🛰 衛星写真（Esri）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Imagery'},
-  {label:'🌑 ダーク（CARTO）', url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
-  {label:'💡 ライト（CARTO）', url:'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
+  {label:'🗺 地図（Voyager）', url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', sub:'abcd', attr:'&copy; CARTO &copy; OSM'},
   {label:'🏔 地形図（OpenTopo）', url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', sub:'abc', attr:'&copy; OpenTopoMap (CC-BY-SA)'},
   {label:'🛣 道路地図（Esri）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Street Map'},
   {label:'🗾 地形詳細（Esri Topo）', url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', sub:'', attr:'Esri World Topo Map'},
 ];
-let currentMapStyle = parseInt(localStorage.getItem('cpc_map_style') ?? '2');
+let currentMapStyle = parseInt(localStorage.getItem('cpc_map_style') ?? '0'); // デフォルト: 衛星写真
 let baseTileLayer = null;
 
 function setMapStyle(idx){
@@ -603,7 +600,7 @@ let rvData=null;
 let radarFrames=[];
 let currentFrameIdx=-1;
 let sliderEl=null;
-const RAIN_COLOR=8; // Dark_Sky
+const RAIN_COLOR=6; // NEXRAD Level III: 強=赤→オレンジ→黄→緑→水色=弱
 const TILE_SZ=256;
 
 async function fetchRainViewer(){
@@ -675,7 +672,7 @@ function applyRainFilter(mode){
   css.id='wx-rain-filter-override';
   const existing=document.getElementById('wx-rain-filter-override');
   if(existing) existing.remove();
-  css.textContent=`.wx-rain-tile{filter:${styles[mode]||styles.default} !important}`;
+  css.textContent=`/* 降水エコーはRainViewerのカラー(colorScheme 6)使用 */ !important}`;
   document.head.appendChild(css);
 }
 
@@ -697,12 +694,22 @@ async function toggleWx(type){
   }
 
   if(type==='esri'){
-    // Esri衛星写真をオーバーレイ（半透明）
+    // Himawari赤外雲画像（NASA GIBS）
+    const gibsTE=gibsTime(70);
     wxLayers.esri=L.tileLayer(
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      {opacity:0.75, maxZoom:17, zIndex:160, attribution:'Esri World Imagery'}
+      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsTE}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+      {opacity:0.85, maxZoom:6, zIndex:155, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.esri=true; btn.classList.add('active');
+    if(!wxLayers.esriTimer) wxLayers.esriTimer=setInterval(()=>{
+      if(!wxActive.esri) return;
+      if(wxLayers.esri) map.removeLayer(wxLayers.esri);
+      const t=gibsTime(70);
+      wxLayers.esri=L.tileLayer(
+        `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
+        {opacity:0.85, maxZoom:6, zIndex:155, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+      ).addTo(map);
+    },600000);
     return;
   }
 
