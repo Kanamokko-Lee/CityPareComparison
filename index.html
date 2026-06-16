@@ -28,7 +28,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .leaflet-container{background:#04080f}
 .leaflet-tile{filter:none}
 /* 降水エコーはRainViewerの色そのまま使用 */
-.wx-sat-tile{filter:invert(1) brightness(0.85) sepia(0.3) !important}
+/* wx-sat-tile color applied via JS */
 .leaflet-control-zoom{border:1px solid var(--hi)!important}
 .leaflet-control-zoom a{background:#0b1220!important;color:var(--accent)!important;border-bottom:1px solid var(--border)!important;font-size:1.1rem!important}
 .leaflet-popup-content-wrapper{background:#0a1825!important;border:1px solid var(--hi)!important;border-radius:6px!important;box-shadow:0 4px 20px rgba(0,0,0,.8)!important}
@@ -672,7 +672,9 @@ function applyRainFilter(mode){
   css.id='wx-rain-filter-override';
   const existing=document.getElementById('wx-rain-filter-override');
   if(existing) existing.remove();
-  css.textContent=`/* 降水エコーはRainViewerのカラー(colorScheme 6)使用 */ !important}`;
+  css.textContent=`/* 降水エコーはRainViewerのカラー(colorScheme 6)使用 */
+/* 赤外雲画像エンハンスフィルター */
+.wx-ir-enhanced{filter:invert(1) hue-rotate(160deg) saturate(2.5) brightness(1.1) contrast(1.2) !important} !important}`;
   document.head.appendChild(css);
 }
 
@@ -680,6 +682,33 @@ function removeSlider(){
   const w=document.getElementById('wx-slider-wrap');
   if(w)w.remove();
   sliderEl=null;
+}
+
+// 衛星雲画像の不透明度スライダー
+function createIRSlider(){
+  if(document.getElementById('ir-slider-wrap')) return;
+  const wrap=document.createElement('div');
+  wrap.id='ir-slider-wrap';
+  wrap.style.cssText='position:fixed;bottom:calc(env(safe-area-inset-bottom,0px)+52px);left:50%;transform:translateX(-50%);z-index:600;background:rgba(8,13,24,0.9);border:1px solid var(--hi);border-radius:10px;padding:7px 12px;display:flex;align-items:center;gap:8px;backdrop-filter:blur(8px);min-width:220px;max-width:90vw';
+  wrap.innerHTML=`<span style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap">☁ 濃度</span>
+    <input id="ir-opacity-slider" type="range" min="0" max="100" value="75" step="5" style="flex:1;accent-color:#80d0f0;cursor:pointer" oninput="applyIROpacity(this.value)">
+    <span id="ir-opacity-label" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--accent);white-space:nowrap;min-width:36px;text-align:right">75%</span>
+    <button onclick="removeIRSlider()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:0.9rem;line-height:1;padding:0 2px">✕</button>`;
+  document.body.appendChild(wrap);
+}
+
+function removeIRSlider(){
+  const w=document.getElementById('ir-slider-wrap');
+  if(w) w.remove();
+}
+
+function applyIROpacity(val){
+  const opacity=parseInt(val)/100;
+  document.getElementById('ir-opacity-label').textContent=val+'%';
+  // Apply to both esri(📡) and ir(☁) layers
+  ['esri','ir'].forEach(type=>{
+    if(wxLayers[type]) wxLayers[type].setOpacity(opacity);
+  });
 }
 
 async function toggleWx(type){
@@ -690,6 +719,10 @@ async function toggleWx(type){
     wxActive[type]=false;
     btn.classList.remove('active');
     if(type==='rain') removeSlider();
+    if(type==='esri'||type==='ir'){
+      // スライダーは両方OFFになったら消す
+      if(!wxActive.esri&&!wxActive.ir) removeIRSlider();
+    }
     return;
   }
 
@@ -698,16 +731,17 @@ async function toggleWx(type){
     const gibsTE=gibsTime(70);
     wxLayers.esri=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsTE}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.85, maxZoom:6, zIndex:155, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.75, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.esri=true; btn.classList.add('active');
+    createIRSlider();
     if(!wxLayers.esriTimer) wxLayers.esriTimer=setInterval(()=>{
       if(!wxActive.esri) return;
       if(wxLayers.esri) map.removeLayer(wxLayers.esri);
       const t=gibsTime(70);
       wxLayers.esri=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.85, maxZoom:6, zIndex:155, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.75, maxZoom:6, zIndex:155, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
@@ -718,9 +752,10 @@ async function toggleWx(type){
     const gibsT=gibsTime(70);
     wxLayers.ir=L.tileLayer(
       `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${gibsT}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-      {opacity:0.85, maxZoom:6, zIndex:150, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+      {opacity:0.75, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
     ).addTo(map);
     wxActive.ir=true; btn.classList.add('active');
+    createIRSlider();
     // 10分ごと自動更新
     if(!wxLayers.irTimer) wxLayers.irTimer=setInterval(()=>{
       if(!wxActive.ir) return;
@@ -728,7 +763,7 @@ async function toggleWx(type){
       const t=gibsTime(70);
       wxLayers.ir=L.tileLayer(
         `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Himawari_AHI_Band13_Clean_Infrared/default/${t}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.jpg`,
-        {opacity:0.85, maxZoom:6, zIndex:150, className:'wx-sat-tile', attribution:'NASA GIBS / Himawari-9'}
+        {opacity:0.75, maxZoom:6, zIndex:150, className:'wx-ir-enhanced', attribution:'NASA GIBS / Himawari-9'}
       ).addTo(map);
     },600000);
     return;
