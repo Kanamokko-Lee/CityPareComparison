@@ -873,29 +873,104 @@ async function toggleTyphoon(){
   }
   btn.textContent='🌀…';
   try{
-    // 気象庁台風情報API (正式エンドポイント)
-    const r=await fetch('https://www.jma.go.jp/bosai/information/data/typhoon.json');
+    // Worker経由で気象庁台風情報APIを呼ぶ
+    const PROXY='https://city-pare.happykanamo.workers.dev/jma/';
+    const r=await fetch(PROXY+'information/data/typhoon.json');
     if(!r.ok) throw new Error('HTTP '+r.status);
     const list=await r.json();
+    console.log('Typhoon list raw:', JSON.stringify(list).slice(0,500));
     if(!list||!list.length){
       alert('現在、活動中の台風はありません');
       btn.textContent='🌀';return;
     }
-    console.log('Typhoon list:', JSON.stringify(list).slice(0,300));
     for(const tc of list){
-      const eventId=tc.eventId||tc.id||tc;
-      if(eventId) await drawTyphoon(eventId);
+      // eventIdの形式を確認してから渡す
+      const eventId=tc.eventId||tc.id||(typeof tc==='string'?tc:null);
+      console.log('Processing typhoon:', eventId, tc);
+      if(eventId) await drawTyphoon(eventId, PROXY);
     }
     if(typhoonLayers.length>0){
       typhoonActive=true;btn.classList.add('active');
     } else {
-      alert('台風データを描画できませんでした');
+      alert('現在、活動中の台風はありません');
     }
   }catch(e){
     console.error('Typhoon error:',e);
-    alert('台風データを取得できませんでした: '+e.message);
+    alert('台風データを取得できませんでした:\n'+e.message);
   }
   btn.textContent='🌀';
+}
+
+async function drawTyphoon(eventId, PROXY){
+  PROXY=PROXY||'https://city-pare.happykanamo.workers.dev/jma/';
+  try{
+    const r=await fetch(PROXY+'typhoon/data/'+eventId+'/specifications.json');
+    if(!r.ok){ console.warn('spec not found:', eventId, r.status); return; }
+    const spec=await r.json();
+    console.log('Typhoon spec:', JSON.stringify(spec).slice(0,600));
+
+    const color='#ff4444';
+    const fcolor='#ff8800';
+    // 名前の取得（複数パターン対応）
+    const name=spec.nameJp||spec.nameEn||spec.name||
+               (spec.text&&(spec.text.nameJp||spec.text.nameEn))||eventId;
+
+    // 実況点
+    const cur=spec.current||spec.analysis||
+              (spec.items&&spec.items[0])||
+              (Array.isArray(spec)&&spec[0]);
+    if(cur){
+      const lat=cur.lat||cur.latitude;
+      const lon=cur.lon||cur.longitude;
+      if(lat&&lon){
+        const pressure=cur.pressure||cur.centerPressure||'?';
+        const wind=cur.maxWindSpeed||cur.wind||cur.windSpeed||'?';
+        const m=L.circleMarker([lat,lon],{
+          radius:14,color,fillColor:color,fillOpacity:0.25,weight:3
+        }).bindPopup(
+          '<div class="pn">🌀 '+name+'</div>'+
+          '<div class="ps">中心気圧: '+pressure+' hPa<br>最大風速: '+wind+' kt</div>'
+        ).addTo(map);
+        typhoonLayers.push(m);
+      }
+    }
+
+    // 予報経路
+    const forecasts=spec.forecast||spec.forecasts||
+                    spec.forecastItems||[];
+    const flist=Array.isArray(forecasts)?forecasts:[];
+    const fpts=flist.filter(p=>(p.lat||p.latitude)&&(p.lon||p.longitude))
+                    .map(p=>[(p.lat||p.latitude),(p.lon||p.longitude)]);
+
+    if(cur&&fpts.length){
+      const curLat=cur.lat||cur.latitude;
+      const curLon=cur.lon||cur.longitude;
+      if(curLat&&curLon){
+        const fl=L.polyline([[curLat,curLon],...fpts],{
+          color:fcolor,weight:2.5,opacity:0.85,dashArray:'10,6'
+        }).addTo(map);
+        typhoonLayers.push(fl);
+
+        flist.filter(p=>(p.lat||p.latitude)&&(p.lon||p.longitude)).forEach(p=>{
+          const plat=p.lat||p.latitude;
+          const plon=p.lon||p.longitude;
+          const nm=p.forecastCircle||p.circle||p.radius||p.probabilityCircle||0;
+          if(nm>0){
+            const c=L.circle([plat,plon],{
+              radius:nm*1852,color:fcolor,fillColor:fcolor,fillOpacity:0.04,weight:1
+            }).addTo(map);
+            typhoonLayers.push(c);
+          }
+          const timeStr=p.validTime||p.time||p.dateTime||'';
+          const label=timeStr?new Date(timeStr).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+          const fm=L.circleMarker([plat,plon],{
+            radius:5,color:fcolor,fillColor:fcolor,fillOpacity:0.7,weight:1.5
+          }).bindPopup('<div class="ps">'+label+'<br>気圧: '+(p.pressure||p.centerPressure||'?')+' hPa<br>風速: '+(p.maxWindSpeed||p.wind||'?')+' kt</div>').addTo(map);
+          typhoonLayers.push(fm);
+        });
+      }
+    }
+  }catch(e){console.warn('drawTyphoon error:',e);}
 }
 
 async function drawTyphoon(eventId){
