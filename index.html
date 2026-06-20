@@ -208,6 +208,24 @@ M646 closed between F319 and F329 from ABVAR to POTIB"></textarea>
       <div id="user-airway-list" style="font-family:'Share Tech Mono',monospace;font-size:0.62rem;color:var(--muted);max-height:100px;overflow-y:auto;margin-top:6px"></div>
     </div>
     <div class="setting-row">
+      <div class="setting-label">📦 ウェイポイント一括インポート</div>
+      <div class="setting-desc">各国AIPから抽出した複数件のウェイポイントを一度に取り込みます。下記2形式に対応：<br>
+        ① JSON形式: <code>{"NAME":[lat,lon,"WPT","備考"], ...}</code><br>
+        ② 簡易CSV形式: 1行に <code>NAME,lat,lon[,備考]</code>（カンマ区切り、ヘッダー行不要）<br>
+        既存と同名のフィックスは上書きされます（曖昧フィックスは別途AMBIGUOUS_FIXES設定が必要）。
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <textarea id="wp-bulk-text" rows="6" placeholder='{"ABVIP":[1.00222,103.84222,"WPT","SG AIP ENR4.4"], ...}&#10;または&#10;ABVIP,1.00222,103.84222,SG AIP ENR4.4'
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;resize:vertical"></textarea>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <button class="mb" onclick="previewBulkImport()">件数を確認</button>
+          <button class="mb pri" onclick="doBulkImportWP()">一括登録（localStorage）</button>
+          <button class="mb" onclick="syncToGist()">Gistへ保存</button>
+        </div>
+      </div>
+      <div class="key-status" id="wp-bulk-status"></div>
+    </div>
+    <div class="setting-row">
       <div class="setting-label">AIPソース・スナップショット保存</div>
       <div class="setting-desc">各国eAIPから取得した座標表の原本テキストをGist内(aip_sources.json)に保存し、次回以降の調査を高速化します。<br>キー例: SG_ENR3.2, HK_ENR3.1, TW_M646</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
@@ -288,7 +306,9 @@ const AIRWAYS_SEED={
   // 今後よく使う航空路をここに直接追加してもよい（コード埋め込み・Gist不要で即反映）
   // 2026-06 JL0036 RJTT-WSSS BRIC RSTR資料調査時に確認した区間（SG AIP ENR3.2 27NOV2025）
   L625:["TOMAN","UXEDA","VERIN","ISDEB","UPLAM","LUSMO","GUTUP","AKMON"],
-  M646:["VENUN","TOMAN"], // 確認できたのはVENUN-TOMAN区間のみ。ABVAR-POTIB側は未確認
+  M646:["VENUN","TOMAN"], // SG側で確認できたのはVENUN-TOMAN区間のみ。TW側(HCN-POTIB)は別途確認済みだが中間点未確認
+  // 2026-06 台湾AIP(ais.caa.gov.tw RC-ENR 3.2 M750-zh-TW)より確認
+  M750:["ENVAR","DADON","EXTRA","RENOT","TONGA","TOROX","ANLOT","PILOX","SANAS","KUDOS","LEKOS","MORSU","MOLKA"],
 };
 const USER_AIRWAYS_KEY='user_airways_v1';
 function getUserAirways(){try{return JSON.parse(localStorage.getItem(USER_AIRWAYS_KEY)||'{}');}catch{return {};}}
@@ -358,6 +378,48 @@ function lookup(id){
   if(cache[id])return cache[id];
   if(!DB)loadDB();
   return DB[id]||null;
+}
+
+// ═══════════════════════════════════════════════
+// 曖昧フィックス名（同じ5文字コードが世界の複数地域に存在する）の解決
+// 例: NYLON（日本 千葉県沖 / シンガポールFIR近郊）、SUSAR、AKOMA等
+// ARINC424の仕様上、フィックス名は世界一意ではないため、前後の通過点との
+// 距離で正しい候補を選ぶ。文脈が無い場合は内蔵DB(lookup既定値)にフォールバック。
+// ═══════════════════════════════════════════════
+const AMBIGUOUS_FIXES={
+  // name: [[lat,lon,'地域メモ'], ...]  ※lookup()の既定値も候補の一つとして別途自動的に含まれる
+  NYLON:[[1.61583,104.10667,'SG周辺']],   // 既定(DB)は千葉県沖
+  SUSAR:[[3.98,105.26306,'SG周辺']],      // 既定(DB)は島根県沖
+  AGVAR:[[1.78861,103.69583,'SG周辺']],   // 既定(DB)はフィリピン付近
+  AKOMA:[[1.75611,103.91194,'SG周辺']],   // 既定(DB)は中国内陸
+  BIPOP:[[1.52278,104.17167,'SG周辺']],   // 既定(DB)は中国南部
+  JUNHA:[[0.90361,104.51444,'SG周辺']],   // 既定(DB)は韓国
+  TEBUN:[[1.24861,103.26583,'SG周辺']],   // 既定(DB)は中国四川省
+};
+function gcNmSafe(a,b){
+  if(!a||!b)return Infinity;
+  return gcNm([a[0],a[1]],[b[0],b[1]]);
+}
+// 前後の確定済み座標(prevPt/nextPt: {lat,lon}またはnull)を見て、
+// 曖昧フィックスの正しい候補を選ぶ。曖昧でなければ通常のlookup結果を返す。
+function resolveAmbiguous(name,prevPt,nextPt){
+  const base=lookup(name);
+  const extra=AMBIGUOUS_FIXES[name];
+  if(!extra)return base; // 曖昧でないフィックスはそのまま
+  // 候補リスト = [既定値(あれば), ...追加候補]
+  const candidates=[];
+  if(base) candidates.push(base);
+  extra.forEach(c=>candidates.push(c));
+  if(candidates.length<=1) return candidates[0]||null;
+  // 前後の点との距離が最小の候補を選ぶ
+  let best=candidates[0], bestScore=Infinity;
+  for(const c of candidates){
+    const dPrev=prevPt?gcNmSafe([c[0],c[1]],[prevPt.lat,prevPt.lon]):0;
+    const dNext=nextPt?gcNmSafe([c[0],c[1]],[nextPt.lat,nextPt.lon]):0;
+    const score=dPrev+dNext;
+    if(score<bestScore){bestScore=score;best=c;}
+  }
+  return best;
 }
 function cacheWaypoint(id,data){
   const c=getCache();c[id]=data;saveCache(c);
@@ -1233,6 +1295,23 @@ async function drawTyphoon(eventId){
 
 let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
 
+// 名前の配列(names)を座標点配列に変換する。曖昧フィックス(AMBIGUOUS_FIXES)は
+// 直前に確定した点との距離で正しい候補を選ぶ（逐次処理）。
+function resolveNamesToPoints(names){
+  const pts=[];
+  let prevPt=null;
+  for(let i=0;i<names.length;i++){
+    const n=names[i];
+    // 次の未解決名がまだ無いので、曖昧解決にはprevPtのみ使う（次の点は逐次確定前なのでnext未使用）
+    const d=AMBIGUOUS_FIXES[n] ? resolveAmbiguous(n,prevPt,null) : lookup(n);
+    if(!d) continue;
+    const pt={lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};
+    pts.push(pt);
+    prevPt=pt;
+  }
+  return pts;
+}
+
 function resolveRouteLocal(r){
   // legs情報があれば、各2点間の航空路を調べて中間フィックスを補完する
   if(r.legs && r.legs.length===r.rawWps.length-1){
@@ -1247,11 +1326,9 @@ function resolveRouteLocal(r){
       if(mid) expanded.push(...mid);
       expanded.push(to);
     }
-    const pts=expanded.map(n=>{const d=lookup(n);if(!d)return null;return{lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};}).filter(Boolean);
-    return sanitize(pts);
+    return sanitize(resolveNamesToPoints(expanded));
   }
-  const pts=r.rawWps.map(n=>{const d=lookup(n);if(!d)return null;return{lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};}).filter(Boolean);
-  return sanitize(pts);
+  return sanitize(resolveNamesToPoints(r.rawWps));
 }
 
 // ユーザーがドラッグして固定したラベル位置 {routeLabel: {x,y}}（route.idではなくlabel文字列をキーにして
@@ -1436,7 +1513,10 @@ function renderRoutes(doFit=true){
     if(!r._pts.length) return;
 
     // _ptsの各点をlookup()で座標を最新化（ユーザー登録WPTが反映されるように）
+    // ただし曖昧フィックス(AMBIGUOUS_FIXES)はresolveRouteLocalで前後関係から
+    // 正しく選択済みなので、ここで上書きしない（最新化対象から除外）
     const freshPts = r._pts.map(p=>{
+      if(AMBIGUOUS_FIXES[p.name]) return p;
       const d = lookup(p.name);
       if(d) return {...p, lat:d[0], lon:d[1], type:d[2]||p.type, est:!!(d[3]&&d[3].includes('推定'))};
       return p;
@@ -1535,6 +1615,7 @@ function redrawRoutes(){
   ROUTES.forEach(r=>{
     if(!r._pts||!r._pts.length) return;
     const freshPts=r._pts.map(p=>{
+      if(AMBIGUOUS_FIXES[p.name]) return p;
       const d=lookup(p.name);
       if(d) return {...p,lat:d[0],lon:d[1],type:d[2]||p.type};
       return p;
@@ -1708,6 +1789,82 @@ async function ocrImage(b64,mime){
 }
 
 // ユーザーWP登録UI
+// ═══════════════════════════════════════════════
+// ウェイポイント一括インポート（JSON or 簡易CSV形式）
+// 大量のフィックスを1回のコピペで取り込むための機能。
+// 1件ずつコンソールスクリプトを使う運用の代替。
+// ═══════════════════════════════════════════════
+function parseBulkWPText(text){
+  text=text.trim();
+  if(!text) return {};
+  // JSON形式かどうか試す
+  if(text.startsWith('{')){
+    try{
+      const obj=JSON.parse(text);
+      const out={};
+      for(const [k,v] of Object.entries(obj)){
+        if(Array.isArray(v)&&v.length>=2){
+          out[k.toUpperCase()]=[parseFloat(v[0]),parseFloat(v[1]),v[2]||'WPT',v[3]||k];
+        }
+      }
+      return out;
+    }catch(e){
+      throw new Error('JSON解析エラー: '+e.message);
+    }
+  }
+  // CSV形式: NAME,lat,lon[,備考]  1行1件
+  const out={};
+  const lines=text.split('\n');
+  for(const line of lines){
+    const l=line.trim();
+    if(!l||l.startsWith('#')) continue;
+    const parts=l.split(',').map(s=>s.trim());
+    if(parts.length<3) continue;
+    const [name,latS,lonS,...rest]=parts;
+    const lat=parseFloat(latS), lon=parseFloat(lonS);
+    if(isNaN(lat)||isNaN(lon)) continue;
+    out[name.toUpperCase()]=[lat,lon,'WPT',rest.join(',')||name];
+  }
+  return out;
+}
+
+function previewBulkImport(){
+  const text=document.getElementById('wp-bulk-text').value;
+  try{
+    const parsed=parseBulkWPText(text);
+    const n=Object.keys(parsed).length;
+    if(n===0){ setWpBulkStatus('解析できる行がありませんでした','err'); return; }
+    const sample=Object.keys(parsed).slice(0,5).join(', ');
+    setWpBulkStatus(`✓ ${n}件を検出: ${sample}${n>5?' ...':''}`,'ok');
+  }catch(e){
+    setWpBulkStatus('✗ '+e.message,'err');
+  }
+}
+
+function doBulkImportWP(){
+  const text=document.getElementById('wp-bulk-text').value;
+  try{
+    const parsed=parseBulkWPText(text);
+    const n=Object.keys(parsed).length;
+    if(n===0){ setWpBulkStatus('解析できる行がありませんでした','err'); return; }
+    const db=getUserWPs();
+    Object.assign(db,parsed);
+    saveUserWPs(db);
+    updateUserWPList();
+    setWpBulkStatus(`✓ ${n}件を登録しました（localStorageに保存済み。Gistにも保存する場合は「Gistへ保存」を押してください）`,'ok');
+    document.getElementById('wp-bulk-text').value='';
+  }catch(e){
+    setWpBulkStatus('✗ '+e.message,'err');
+  }
+}
+
+function setWpBulkStatus(msg,cls=''){
+  const el=document.getElementById('wp-bulk-status');
+  if(!el) return;
+  el.textContent=msg;
+  el.className='key-status'+(cls?' '+cls:'');
+}
+
 function saveUserWPFromUI(){
   const ident=document.getElementById('wp-ident').value.trim().toUpperCase();
   let latStr=document.getElementById('wp-lat').value.trim();
