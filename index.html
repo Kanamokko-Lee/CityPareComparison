@@ -146,9 +146,14 @@ textarea:focus{border-color:var(--hi)}
 
     <!-- テキストエリア（常に表示） -->
     <div class="sect-label">📝 テキスト貼付（どちらか一方を使用）</div>
-    <textarea id="ta" rows="7" placeholder="VRNT 1 RTNG 01R VIA LOZ-Y52N89Q15...
+    <textarea id="ta" rows="7" placeholder="【VRNT形式】
+VRNT 1 RTNG 01R VIA LOZ-Y52N89Q15...
 0 OPTD /F400 DCT SAMUS Y84 HCE...
-TRIPF 56460  EET  5.41"></textarea>
+TRIPF 56460  EET  5.41
+
+【RSTR形式（BRIC FPM RSTR）】
+L625 closed between F325 and F345 from TOMAN to AKMON
+M646 closed between F319 and F329 from ABVAR to POTIB"></textarea>
 
     <!-- ウェイポイント手動登録 -->
     <div class="sect-label" style="margin-top:6px">📍 ウェイポイント座標を登録・修正</div>
@@ -184,6 +189,21 @@ TRIPF 56460  EET  5.41"></textarea>
         <button class="mb" onclick="saveKey()">保存</button>
       </div>
       <div class="key-status" id="key-status"></div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">AIPソース・スナップショット保存</div>
+      <div class="setting-desc">各国eAIPから取得した座標表の原本テキストをGist内(aip_sources.json)に保存し、次回以降の調査を高速化します。<br>キー例: SG_ENR3.2, HK_ENR3.1, TW_M646</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <input id="aip-key" placeholder="ソースキー (例: SG_ENR3.2_L625)" autocomplete="off" spellcheck="false"
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:7px 10px;outline:none">
+        <textarea id="aip-text" rows="4" placeholder="座標表の生テキストをここに貼り付け..."
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;resize:vertical"></textarea>
+        <div style="display:flex;gap:6px">
+          <button class="mb" onclick="saveAipSourceFromUI()">保存</button>
+          <button class="mb" onclick="listAipSourcesUI()">一覧表示</button>
+        </div>
+      </div>
+      <div class="key-status" id="aip-status"></div>
     </div>
     <div class="setting-row">
       <div class="setting-label">GitHub Gist連携（WPT永続保存）</div>
@@ -531,6 +551,75 @@ function parseRoutes(text){
   routes.sort((a,b)=>a.id-b.id);
   return routes;
 }
+
+// ═══════════════════════════════════════════════
+// BRIC "FPM RSTR" (Restrictions) パーサー
+// 例:
+//   L625 closed between F325 and F345 from TOMAN to AKMON
+//   M646 closed between F319 and F329 from ABVAR to POTIB
+// 同じ航空路名(L625, M646等)内で、同じ(from,to)の高度帯違いは1セグメントに統合。
+// 隣接(共有端点)するセグメントは1本の折れ線として連結。
+// 共有点が無い別区間(例: L625のTOMAN-AKMONとUDOSI-ANOKI)は
+// 同名航空路でも別ルート(L625-1, L625-2 ...)として描画する。
+// ═══════════════════════════════════════════════
+function parseRestrictions(text){
+  const COLORS=['#ff5566','#ffaa22','#00ddff','#33ee88','#cc66ff','#ffdd44','#ff8844'];
+  const DASHES=[null,'10,5','14,5','6,4','8,4','10,4',null];
+
+  // "L625 closed between F325 and F345 from TOMAN to AKMON" を抽出
+  // 航空路名: 英字1-2文字 + 数字1-4桁 (L625, M646, Q14, W4, Y21, N892, P648等)
+  const re=/\b([A-Z]{1,2}\d{1,4})\s+closed\s+between\s+F?\d+\s+and\s+F?\d+\s+from\s+([A-Z]{3,6})\s+to\s+([A-Z]{3,6})/gi;
+  const segByAirway=new Map(); // airway -> Map("from|to" -> {from,to})  ※高度帯違いの重複を排除
+
+  let m;
+  while((m=re.exec(text))){
+    const airway=m[1].toUpperCase();
+    const from=m[2].toUpperCase();
+    const to=m[3].toUpperCase();
+    if(!segByAirway.has(airway)) segByAirway.set(airway,new Map());
+    const key=from+'|'+to;
+    if(!segByAirway.get(airway).has(key)){
+      segByAirway.get(airway).set(key,{from,to});
+    }
+  }
+
+  if(segByAirway.size===0) return [];
+
+  const routes=[];
+  let i=0;
+  for(const [airway,segMap] of segByAirway){
+    const segs=[...segMap.values()]; // ユニークな(from,to)組のみ、出現順
+
+    // セグメントを「鎖」にグルーピング：端点を共有するものを連結
+    const chains=[]; // [[wp1,wp2,...], ...]
+    for(const seg of segs){
+      let attached=false;
+      for(const chain of chains){
+        const head=chain[0], tail=chain[chain.length-1];
+        if(seg.from===tail){ chain.push(seg.to); attached=true; break; }
+        if(seg.to===tail){ chain.push(seg.from); attached=true; break; }
+        if(seg.from===head){ chain.unshift(seg.to); attached=true; break; }
+        if(seg.to===head){ chain.unshift(seg.from); attached=true; break; }
+      }
+      if(!attached) chains.push([seg.from, seg.to]);
+    }
+
+    // 同一航空路に複数の独立区間がある場合はサブラベル(L625-1, L625-2...)で別ルート化
+    chains.forEach((chain,ci)=>{
+      const label = chains.length>1 ? `${airway}-${ci+1}` : airway;
+      routes.push({
+        id:i+1, label, via:label+' RSTR',
+        color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
+        tripf:0, time:0,
+        rawWps:chain
+      });
+      i++;
+    });
+  }
+  routes.sort((a,b)=>a.label.localeCompare(b.label));
+  return routes;
+}
+
 
 // ═══════════════════════════════════════════════
 // MAP
@@ -1315,8 +1404,10 @@ async function doGo(){
     }
 
     setProg(20);setSt('ルートを解析中...');
-    const routes=parseRoutes(rawText);
-    if(!routes.length)throw new Error('VRNTブロックが見つかりませんでした');
+    // VRNT形式 or RSTR(制限資料)形式を自動判別
+    const isRstr = /\bclosed\s+between\b/i.test(rawText) && !/\bVRNT\s+\d/.test(rawText);
+    const routes = isRstr ? parseRestrictions(rawText) : parseRoutes(rawText);
+    if(!routes.length)throw new Error(isRstr ? 'RSTR行（closed between ... from ... to ...）が見つかりませんでした' : 'VRNTブロックが見つかりませんでした');
 
     const apiKey=getApiKey();
     if(apiKey){
@@ -1564,7 +1655,95 @@ async function syncToGistSilent(){
   else setSt('✗ Gist保存に失敗しました');
 }
 
-// ESCキーでモーダルを閉じる
+// ═══════════════════════════════════════════════
+// AIP生データ スナップショット保存（aip_sources.json）
+// 各国eAIPから取得した座標表の原本テキストをGist内に
+// 別ファイルとして保存しておき、次回以降の調査を高速化する。
+// キーはFIR/地域コード（例: 'SG_ENR3.2', 'HK_ENR3.1', 'TW_M646'）
+// ═══════════════════════════════════════════════
+async function syncAipSourceToGist(sourceKey, rawText, meta){
+  const id=localStorage.getItem('gist_id');
+  const tok=localStorage.getItem('gist_token');
+  if(!id||!tok){ setGistStatus('Gist IDとTokenを設定してください','err'); return false; }
+  try{
+    const r=await fetch(`https://api.github.com/gists/${id}`,{
+      headers:{'Authorization':'token '+tok,'Accept':'application/vnd.github+json'}
+    });
+    let existing={};
+    if(r.ok){
+      const data=await r.json();
+      const file=data.files?.['aip_sources.json'];
+      if(file) try{existing=JSON.parse(file.content);}catch{}
+    }
+    existing[sourceKey]={
+      fetchedAt:new Date().toISOString(),
+      meta:meta||{},
+      text:rawText
+    };
+    const r2=await fetch(`https://api.github.com/gists/${id}`,{
+      method:'PATCH',
+      headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},
+      body:JSON.stringify({files:{'aip_sources.json':{content:JSON.stringify(existing,null,2)}}})
+    });
+    if(!r2.ok) throw new Error('HTTP '+r2.status);
+    setGistStatus('✓ AIPソース保存: '+sourceKey,'ok');
+    return true;
+  }catch(e){ setGistStatus('✗ '+e.message,'err'); return false; }
+}
+
+async function loadAipSourcesFromGist(){
+  const id=localStorage.getItem('gist_id');
+  const tok=localStorage.getItem('gist_token');
+  if(!id) return {};
+  try{
+    const headers={'Accept':'application/vnd.github+json'};
+    if(tok) headers['Authorization']='token '+tok;
+    const r=await fetch(`https://api.github.com/gists/${id}`,{headers});
+    if(!r.ok) return {};
+    const data=await r.json();
+    const file=data.files?.['aip_sources.json'];
+    if(!file) return {};
+    return JSON.parse(file.content);
+  }catch(e){ console.warn('loadAipSourcesFromGist failed:',e); return {}; }
+}
+
+function setAipStatus(msg,cls=''){
+  const el=document.getElementById('aip-status');
+  if(!el) return;
+  el.textContent=msg;
+  el.className='key-status'+(cls?' '+cls:'');
+}
+
+async function saveAipSourceFromUI(){
+  const key=document.getElementById('aip-key').value.trim();
+  const text=document.getElementById('aip-text').value.trim();
+  if(!key){ setAipStatus('ソースキーを入力してください','err'); return; }
+  if(!text){ setAipStatus('テキストを入力してください','err'); return; }
+  setAipStatus('保存中...');
+  const ok=await syncAipSourceToGist(key, text, {savedVia:'manual-ui'});
+  if(ok){
+    setAipStatus('✓ 保存しました: '+key,'ok');
+    document.getElementById('aip-key').value='';
+    document.getElementById('aip-text').value='';
+  } else {
+    setAipStatus('✗ 保存に失敗しました','err');
+  }
+}
+
+async function listAipSourcesUI(){
+  setAipStatus('読込中...');
+  const sources=await loadAipSourcesFromGist();
+  const keys=Object.keys(sources);
+  if(keys.length===0){ setAipStatus('保存済みのAIPソースはありません'); return; }
+  const lines=keys.sort().map(k=>{
+    const s=sources[k];
+    const d=s.fetchedAt? new Date(s.fetchedAt).toLocaleDateString('ja-JP') : '?';
+    return `${k} (${d})`;
+  });
+  setAipStatus(keys.length+'件: '+lines.join(' / '));
+}
+
+
 document.addEventListener('keydown',function(e){
   if(e.key!=='Escape') return;
   if(document.getElementById('m-main').classList.contains('on')) closeMain();
