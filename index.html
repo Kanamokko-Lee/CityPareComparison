@@ -39,10 +39,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .ps{color:var(--muted);font-size:0.7rem;line-height:1.5}
 #lsvg{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:400}
 /* Route labels - compact */
-.rl{position:absolute;z-index:450;pointer-events:auto;background:rgba(6,12,22,0.93);border:2px solid transparent;border-radius:7px;padding:6px 9px;width:140px;cursor:pointer;backdrop-filter:blur(6px);transition:opacity .2s;line-height:1.2;user-select:none}
+.rl{position:absolute;z-index:450;pointer-events:auto;background:rgba(6,12,22,0.93);border:2px solid transparent;border-radius:7px;padding:6px 9px;width:140px;cursor:grab;backdrop-filter:blur(6px);transition:opacity .2s,box-shadow .2s;line-height:1.2;user-select:none;touch-action:none}
 .rl:hover{box-shadow:0 0 12px rgba(255,255,255,.2)}
 .rl.off{opacity:.15;pointer-events:none}
 .rl.sel{box-shadow:0 0 18px rgba(255,255,255,.25)}
+.rl.dragging{cursor:grabbing;box-shadow:0 0 22px rgba(255,255,255,.4);z-index:470;transition:none}
 .rl-vrnt{font-size:0.95rem;font-weight:700;letter-spacing:.04em}
 .rl-via{font-family:'Share Tech Mono',monospace;font-size:0.72rem;color:var(--muted);margin-top:0px;word-break:break-all}
 .rl-sep{height:1px;background:rgba(255,255,255,.1);margin:4px 0}
@@ -191,6 +192,22 @@ M646 closed between F319 and F329 from ABVAR to POTIB"></textarea>
       <div class="key-status" id="key-status"></div>
     </div>
     <div class="setting-row">
+      <div class="setting-label">📡 航空路（AIRWAY）の通過フィックス登録</div>
+      <div class="setting-desc">航空路名と、その航空路が通過するフィックスを順番に登録します。マップ描画時に2点間の中間フィックスを自動で補完し、実際に曲がる経路を再現できます。<br>例: L625 → TOMAN UXEDA VERIN ISDEB UPLAM LUSMO GUTUP AKMON</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <input id="airway-name" placeholder="航空路名 (例: L625)" autocomplete="off" spellcheck="false"
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:7px 10px;outline:none">
+        <textarea id="airway-wps" rows="2" placeholder="通過フィックスをスペースまたは改行区切りで（順番通りに）"
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:7px 10px;outline:none;resize:vertical"></textarea>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="mb" onclick="saveUserAirwayFromUI()">登録</button>
+          <button class="mb" onclick="syncAirwaysToGist()">Gistへ保存</button>
+          <button class="mb" onclick="syncAirwaysFromGist()">Gistから読込</button>
+        </div>
+      </div>
+      <div id="user-airway-list" style="font-family:'Share Tech Mono',monospace;font-size:0.62rem;color:var(--muted);max-height:100px;overflow-y:auto;margin-top:6px"></div>
+    </div>
+    <div class="setting-row">
       <div class="setting-label">AIPソース・スナップショット保存</div>
       <div class="setting-desc">各国eAIPから取得した座標表の原本テキストをGist内(aip_sources.json)に保存し、次回以降の調査を高速化します。<br>キー例: SG_ENR3.2, HK_ENR3.1, TW_M646</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
@@ -260,6 +277,55 @@ function addUserWP(ident,lat,lon,name){
   saveUserWPs(db);
   console.log(`UserWP saved: ${ident} = ${lat},${lon}`);
 }
+
+// ═══════════════════════════════════════════════
+// 航空路（AIRWAY）データベース
+// 航空路名 → 通過フィックス名の順序付きリスト（座標は持たない、waypoints側を参照）
+// 例: AIRWAYS.L625 = ["TOMAN","UXEDA","VERIN","ISDEB","UPLAM","LUSMO","GUTUP","AKMON"]
+// 優先順: ユーザー登録(Gist保存分, localStorage) > 埋め込み初期値(AIRWAYS_SEED)
+// ═══════════════════════════════════════════════
+const AIRWAYS_SEED={
+  // 今後よく使う航空路をここに直接追加してもよい（コード埋め込み・Gist不要で即反映）
+  // 2026-06 JL0036 RJTT-WSSS BRIC RSTR資料調査時に確認した区間（SG AIP ENR3.2 27NOV2025）
+  L625:["TOMAN","UXEDA","VERIN","ISDEB","UPLAM","LUSMO","GUTUP","AKMON"],
+  M646:["VENUN","TOMAN"], // 確認できたのはVENUN-TOMAN区間のみ。ABVAR-POTIB側は未確認
+};
+const USER_AIRWAYS_KEY='user_airways_v1';
+function getUserAirways(){try{return JSON.parse(localStorage.getItem(USER_AIRWAYS_KEY)||'{}');}catch{return {};}}
+function saveUserAirways(db){try{localStorage.setItem(USER_AIRWAYS_KEY,JSON.stringify(db));}catch{}}
+function addUserAirway(name,wpList){
+  const db=getUserAirways();
+  const arr=Array.isArray(wpList)?wpList:String(wpList).split(/[,\s]+/);
+  db[name.toUpperCase()]=arr.map(w=>w.toUpperCase()).filter(Boolean);
+  saveUserAirways(db);
+  console.log(`Airway saved: ${name} = ${db[name.toUpperCase()].length}wps`);
+}
+function deleteUserAirway(name){
+  const db=getUserAirways();
+  delete db[name.toUpperCase()];
+  saveUserAirways(db);
+}
+// 優先順: ユーザー登録 > 埋め込み初期値
+function lookupAirway(name){
+  if(!name)return null;
+  const n=name.toUpperCase();
+  const u=getUserAirways();
+  if(u[n]) return u[n];
+  if(AIRWAYS_SEED[n]) return AIRWAYS_SEED[n];
+  return null;
+}
+// 航空路の全体フィックス列から、from〜to(両端含む)の部分区間を切り出す。
+// 順方向・逆方向どちらでも対応。from/toが見つからなければnullを返す（呼び出し側でfrom-toのみにフォールバック）。
+function sliceAirway(name,from,to){
+  const full=lookupAirway(name);
+  if(!full||!full.length) return null;
+  const fi=full.indexOf(from.toUpperCase());
+  const ti=full.indexOf(to.toUpperCase());
+  if(fi===-1||ti===-1) return null;
+  if(fi<=ti) return full.slice(fi,ti+1);
+  return full.slice(ti,fi+1).reverse();
+}
+
 let DB=null;
 function loadDB(){
   if(DB)return;DB={};
@@ -504,6 +570,33 @@ function parseRoutes(text){
     }
     const optText=optL.join(' ');
 
+    // ローカルフォールバック用: 3文字VOR or 5文字fixのみ
+    // 同時に、各フィックス間の航空路名(legs)も記録する
+    // トークン例: DCT WP1 AWY1 WP2 AWY2 WP3 DCT WP4
+    //   WP   = 英字のみ3or5文字 → フィックス
+    //   AWY  = 英字+数字混在(例: Y84, Q15, A590) → 航空路名
+    //   DCT  = 直行（航空路名なし）
+    const wps=[];
+    const legs=[]; // legs[i] = WP(i)とWP(i+1)の間で使われた航空路名（'DCT'または不明なら null）
+    let pendingAirway=null; // 直前のフィックスの後に出てきた航空路名トークン
+    for(const rawTok of optText.split(/\s+/)){
+      if(!rawTok||rawTok.startsWith('/'))continue;
+      const t=rawTok.replace(/[^A-Za-z0-9]/g,'').toUpperCase();
+      if(!t)continue;
+      if(t==='DCT'){ pendingAirway=null; continue; }
+      if(SKIP_WP.has(t))continue;
+      const isFix=/^[A-Z]{3}$/.test(t)||/^[A-Z]{5}$/.test(t);
+      const isAirway=/^[A-Z]{1,2}\d{1,4}$/.test(t); // Y84, Q15, A590, N89, W15等
+      if(isFix){
+        wps.push(t);
+        if(wps.length>1) legs.push(pendingAirway); // 直前フィックスとの間の航空路を確定
+        pendingAirway=null;
+      } else if(isAirway){
+        pendingAirway=t;
+      }
+      // それ以外（数字のみ等）は無視
+    }
+
     // FPDルート文字列構築（出発・到着空港なし、ウェイポイント+航路名のみ）
     const fpdTokens=[];
     for(const tok of optText.split(/\s+/)){
@@ -517,17 +610,6 @@ function parseRoutes(text){
     }
     const fpdRoute=fpdTokens.join(' ');
     console.log(`VRNT${id} FPD:`, fpdRoute);
-
-    // ローカルフォールバック用: 3文字VOR or 5文字fixのみ
-    const wps=[];
-    for(const tok of optText.split(/\s+/)){
-      if(!tok||tok.startsWith('/'))continue;
-      const t=tok.replace(/[^A-Za-z]/g,'').toUpperCase();
-      if(t.length!==3&&t.length!==5)continue;
-      if(SKIP_WP.has(t))continue;
-      if(/\d/.test(tok))continue;
-      if(/^[A-Z]+$/.test(t))wps.push(t);
-    }
 
     // FPDには最初と最後のウェイポイントを出発・到着として使う（重複しないよう除去）
     const fpdTokensDeduped = fpdTokens.filter((t,i)=>{
@@ -545,7 +627,8 @@ function parseRoutes(text){
       color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
       tripf:num('TRIPF'), time:eetVal(),
       fpdRoute:fpdFull,
-      rawWps:[...wps]
+      rawWps:[...wps],
+      legs:[...legs] // legs[i]: wps[i]〜wps[i+1]間の航空路名 (DCTやなければnull)
     });
   }
   routes.sort((a,b)=>a.id-b.id);
@@ -622,12 +705,20 @@ function parseRestrictions(text){
     // 同一航空路に複数の独立区間がある場合はサブラベル(L625-1, L625-2...)で別ルート化
     chains.forEach((chain,ci)=>{
       const label = chains.length>1 ? `${airway}-${ci+1}` : airway;
-      // 高度帯の要約: "FL325-FL345 / FL365-FL385 / FL405-UNL" 形式
-      const bandSummary=chain.segs.flatMap(s=>s.bands.map(b=>{
-        const loS=b.lo==='F000'||b.lo==='000'?'GND':b.lo;
+      // 高度帯を高い方(上限値)が大きい順にソートしてから要約文字列を作る
+      // "FL325-FL345 / FL365-FL385 / FL405-UNL" → 上から F405-UNL, F365-F385, F325-F345, GND-F305
+      const fl=(s)=>{ // "F305"→305, "GND"/"000"/"F000"→0, "UNL"/"F999"/"F1000"→Infinity
+        if(/^(GND|000|F000)$/.test(s)) return 0;
+        if(/^(UNL|F?999|F?1000)$/.test(s)) return Infinity;
+        const m=s.match(/\d+/); return m?parseInt(m[0]):0;
+      };
+      const bandsFlat=chain.segs.flatMap(s=>s.bands.map(b=>({lo:b.lo,hi:b.hi})));
+      bandsFlat.sort((a,b)=>fl(b.hi)-fl(a.hi)); // 上限が高い順
+      const bandSummary=bandsFlat.map(b=>{
+        const loS=/^(F000|000)$/.test(b.lo)?'GND':b.lo;
         const hiS=/^F?999$/.test(b.hi)||/^F?1000$/.test(b.hi)?'UNL':b.hi;
         return loS+'-'+hiS;
-      }));
+      });
       routes.push({
         id:i+1, label, via:chain.wps[0]+' → '+chain.wps[chain.wps.length-1],
         color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
@@ -1143,15 +1234,36 @@ async function drawTyphoon(eventId){
 let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
 
 function resolveRouteLocal(r){
+  // legs情報があれば、各2点間の航空路を調べて中間フィックスを補完する
+  if(r.legs && r.legs.length===r.rawWps.length-1){
+    const expanded=[r.rawWps[0]];
+    for(let i=0;i<r.legs.length;i++){
+      const from=r.rawWps[i], to=r.rawWps[i+1], airway=r.legs[i];
+      let mid=null;
+      if(airway){
+        const seg=sliceAirway(airway,from,to);
+        if(seg && seg.length>2) mid=seg.slice(1,-1); // from/to自身は除いた中間フィックスのみ
+      }
+      if(mid) expanded.push(...mid);
+      expanded.push(to);
+    }
+    const pts=expanded.map(n=>{const d=lookup(n);if(!d)return null;return{lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};}).filter(Boolean);
+    return sanitize(pts);
+  }
   const pts=r.rawWps.map(n=>{const d=lookup(n);if(!d)return null;return{lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};}).filter(Boolean);
   return sanitize(pts);
 }
+
+// ユーザーがドラッグして固定したラベル位置 {routeLabel: {x,y}}（route.idではなくlabel文字列をキーにして
+// 再解析後も同じ航空路なら位置を維持できるようにする）
+let labelDragPos={};
 
 function clearAll(){
   Object.values(polys).forEach(p=>map.removeLayer(p));polys={};
   map.eachLayer(l=>{if(l instanceof L.CircleMarker)map.removeLayer(l);});
   Object.values(labelEls).forEach(el=>el.remove());labelEls={};
   document.getElementById('lsvg').innerHTML='';
+  labelDragPos={};
 }
 
 function midPt(pts){
@@ -1163,6 +1275,36 @@ function midPt(pts){
 }
 
 const LW=142,LH=90,MG=6;
+// ラベルの可変サイズに対応したオーバーラップ判定（矩形は{x,y,w,h}）
+function rectOk2(a,b){
+  return a.x+a.w+MG<b.x||b.x+b.w+MG<a.x||a.y+a.h+MG<b.y||b.y+b.h+MG<a.y;
+}
+function resolveOverlaps2(items,W,H){
+  for(let pass=0;pass<80;pass++){
+    let moved=false;
+    for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++){
+      const a=items[i],b=items[j];
+      if(a.locked&&b.locked)continue; // 両方ユーザー固定なら動かさない
+      if(rectOk2(a,b))continue;
+      const cx=(a.x+b.x+(a.w+b.w)/2)/2, cy=(a.y+b.y+(a.h+b.h)/2)/2;
+      const dx=(a.x+a.w/2)-(b.x+b.w/2), dy=(a.y+a.h/2)-(b.y+b.h/2);
+      const push=4;
+      const ux=Math.abs(dx)>Math.abs(dy)?Math.sign(dx||1):0;
+      const uy=Math.abs(dx)>Math.abs(dy)?0:Math.sign(dy||1);
+      if(!a.locked){a.x+=ux*push;a.y+=uy*push;}
+      if(!b.locked){b.x-=ux*push;b.y-=uy*push;}
+      moved=true;
+    }
+    // 画面内に収める
+    items.forEach(it=>{
+      if(it.locked)return;
+      it.x=Math.max(MG,Math.min(W-it.w-MG,it.x));
+      it.y=Math.max(MG,Math.min(H-it.h-MG,it.y));
+    });
+    if(!moved)break;
+  }
+}
+// 旧名で呼ばれている箇所のために残す（互換）
 function rectOk(a,b){return a.x+LW+MG<b.x||b.x+LW+MG<a.x||a.y+LH+MG<b.y||b.y+LH+MG<a.y;}
 function resolveOverlaps(items,W,H){
   for(let pass=0;pass<80;pass++){
@@ -1182,6 +1324,8 @@ function resolveOverlaps(items,W,H){
   }
 }
 
+// ユーザーがドラッグして固定したラベル位置はclearAllより前で宣言済み（labelDragPos）
+
 function placeLabels(){
   Object.values(labelEls).forEach(el=>el.remove());labelEls={};
   const svg=document.getElementById('lsvg');svg.innerHTML='';
@@ -1193,29 +1337,17 @@ function placeLabels(){
   const minTripf=Math.min(...vis.filter(r=>r.tripf>0).map(r=>r.tripf));
   const minTime=Math.min(...vis.map(r=>r.time)),maxTime=Math.max(...vis.map(r=>r.time));
 
-  // ラベルを右端に縦に並べる（初期配置）
-  const items=vis.map((r,i)=>{
+  // 1) まずDOM要素を作って実サイズを測る（画面外の仮位置に置いて測定）
+  const built=vis.map((r,i)=>{
     const anc=midPt(r._pts);
     const ap=map.latLngToContainerPoint([anc.lat,anc.lon]);
-    // 右端に並べる
-    return{r,ap,x:W-LW-MG,y:MG+14+i*(LH+MG)};
-  });
-  resolveOverlaps(items,W,H);
-
-  items.forEach(({r,ap,x,y})=>{
-    const lcx=x+LW/2,lcy=y+LH/2;
-    const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
-    ln.setAttribute('x1',lcx);ln.setAttribute('y1',lcy);ln.setAttribute('x2',ap.x);ln.setAttribute('y2',ap.y);
-    ln.setAttribute('stroke',r.color);ln.setAttribute('stroke-width','1.5');ln.setAttribute('stroke-dasharray','5,4');ln.setAttribute('opacity','0.6');
-    svg.appendChild(ln);
-    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
-    dot.setAttribute('cx',ap.x);dot.setAttribute('cy',ap.y);dot.setAttribute('r','4');dot.setAttribute('fill',r.color);dot.setAttribute('opacity','0.85');
-    svg.appendChild(dot);
     const el=document.createElement('div');
     el.className='rl'+(selId===r.id?' sel':'');el.id='lbl'+r.id;
-    el.style.borderColor=r.color;el.style.left=x+'px';el.style.top=y+'px';
+    el.style.borderColor=r.color;
+    el.style.position='absolute';el.style.visibility='hidden';
+    el.style.left='-9999px';el.style.top='0px';
     if(r.isRstr){
-      const bands=(r.bandSummary||[]).slice(0,4).map(b=>'<div class="rl-row"><span class="rl-val">'+b+'</span></div>').join('');
+      const bands=(r.bandSummary||[]).map(b=>'<div class="rl-row"><span class="rl-val">'+b+'</span></div>').join('');
       el.innerHTML=
         '<div class="rl-vrnt" style="color:'+r.color+'">'+r.label+'</div>'+
         (r.via?'<div class="rl-via">'+r.via+'</div>':'')+
@@ -1233,8 +1365,67 @@ function placeLabels(){
         (isMin?'<div class="rl-min">★ MIN</div>':(diff?'<div class="rl-diff">'+diff+'</div>':''))+
         '<div class="rl-row"><span class="rl-key">EET</span><span class="rl-val '+(tB?'best':tW?'worst':'')+'">'+eet(r.time)+'</span></div>';
     }
-    el.addEventListener('click',()=>selRoute(r.id));
-    mapEl.appendChild(el);labelEls[r.id]=el;
+    mapEl.appendChild(el);
+    return {r,ap,el};
+  });
+
+  // 実寸を測定してから配置計算用のitemsを作る
+  const items=built.map(({r,ap,el},i)=>{
+    const w=el.offsetWidth||LW, h=el.offsetHeight||LH;
+    const dragKey=r.label;
+    const dragged=labelDragPos[dragKey];
+    if(dragged){
+      return {r,ap,el,w,h,x:dragged.x,y:dragged.y,locked:true};
+    }
+    return {r,ap,el,w,h,x:W-w-MG,y:MG+14+i*(h+MG),locked:false};
+  });
+  resolveOverlaps2(items,W,H);
+
+  // 2) 実位置を反映＋接続線描画＋ドラッグハンドラ設定
+  items.forEach(({r,ap,el,w,h,x,y})=>{
+    el.style.visibility='visible';
+    el.style.left=x+'px';el.style.top=y+'px';
+
+    const lcx=x+w/2,lcy=y+h/2;
+    const ln=document.createElementNS('http://www.w3.org/2000/svg','line');
+    ln.setAttribute('x1',lcx);ln.setAttribute('y1',lcy);ln.setAttribute('x2',ap.x);ln.setAttribute('y2',ap.y);
+    ln.setAttribute('stroke',r.color);ln.setAttribute('stroke-width','1.5');ln.setAttribute('stroke-dasharray','5,4');ln.setAttribute('opacity','0.6');
+    svg.appendChild(ln);
+    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('cx',ap.x);dot.setAttribute('cy',ap.y);dot.setAttribute('r','4');dot.setAttribute('fill',r.color);dot.setAttribute('opacity','0.85');
+    svg.appendChild(dot);
+
+    // クリックで選択（ドラッグと判定が競合しないよう、移動量が小さい場合のみclick扱い）
+    let downX=0,downY=0,didDrag=false;
+    el.addEventListener('pointerdown',(ev)=>{
+      ev.preventDefault();
+      el.setPointerCapture(ev.pointerId);
+      downX=ev.clientX;downY=ev.clientY;didDrag=false;
+      const startLeft=parseFloat(el.style.left),startTop=parseFloat(el.style.top);
+      el.classList.add('dragging');
+      const onMove=(mv)=>{
+        const dx=mv.clientX-downX, dy=mv.clientY-downY;
+        if(Math.abs(dx)>3||Math.abs(dy)>3) didDrag=true;
+        const nx=startLeft+dx, ny=startTop+dy;
+        el.style.left=nx+'px';el.style.top=ny+'px';
+        // 接続線も追従
+        ln.setAttribute('x1',nx+w/2);ln.setAttribute('y1',ny+h/2);
+      };
+      const onUp=()=>{
+        el.removeEventListener('pointermove',onMove);
+        el.removeEventListener('pointerup',onUp);
+        el.classList.remove('dragging');
+        if(didDrag){
+          labelDragPos[r.label]={x:parseFloat(el.style.left),y:parseFloat(el.style.top)};
+        } else {
+          selRoute(r.id);
+        }
+      };
+      el.addEventListener('pointermove',onMove);
+      el.addEventListener('pointerup',onUp);
+    });
+
+    labelEls[r.id]=el;
   });
 }
 
@@ -1593,6 +1784,7 @@ function openSettings(){
   setGistStatus(gi?'✓ Gist設定済み':'未設定', gi?'ok':'');
   updateCacheDesc();
   updateUserWPList();
+  updateUserAirwayList();
 }
 
 function setGistStatus(msg,cls=''){
@@ -1647,6 +1839,82 @@ async function syncFromGist(){
     updateUserWPList();
     setGistStatus('✓ '+Object.keys(wps).length+'件を読み込みました','ok');
   }catch(e){setGistStatus('✗ '+e.message,'err');}
+}
+
+// ═══════════════════════════════════════════════
+// 航空路(airways.json)のGist保存・読込
+// waypoints.jsonとは別ファイルとして同じGist内に保存する。
+// ═══════════════════════════════════════════════
+async function syncAirwaysToGist(){
+  const id=localStorage.getItem('gist_id');
+  const tok=localStorage.getItem('gist_token');
+  if(!id||!tok){setGistStatus('Gist IDとTokenを設定してください','err');return;}
+  setGistStatus('航空路を保存中...');
+  try{
+    const aw=getUserAirways();
+    const sorted={};
+    Object.keys(aw).sort().forEach(k=>sorted[k]=aw[k]);
+    const r=await fetch(`https://api.github.com/gists/${id}`,{
+      method:'PATCH',
+      headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},
+      body:JSON.stringify({files:{'airways.json':{content:JSON.stringify(sorted,null,2)}}})
+    });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    setGistStatus('✓ 航空路をGistに保存しました（'+Object.keys(sorted).length+'件）','ok');
+  }catch(e){setGistStatus('✗ '+e.message,'err');}
+}
+
+async function syncAirwaysFromGist(){
+  const id=localStorage.getItem('gist_id');
+  const tok=localStorage.getItem('gist_token');
+  if(!id){setGistStatus('Gist IDを設定してください','err');return;}
+  setGistStatus('航空路を読込中...');
+  try{
+    const headers={'Accept':'application/vnd.github+json'};
+    if(tok) headers['Authorization']='token '+tok;
+    const r=await fetch(`https://api.github.com/gists/${id}`,{headers});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    const file=data.files?.['airways.json'];
+    if(!file) throw new Error('airways.jsonが見つかりません（まだ一度も保存していない可能性があります）');
+    const aw=JSON.parse(file.content);
+    saveUserAirways(aw);
+    updateUserAirwayList();
+    setGistStatus('✓ 航空路 '+Object.keys(aw).length+'件を読み込みました','ok');
+  }catch(e){setGistStatus('✗ '+e.message,'err');}
+}
+
+function updateUserAirwayList(){
+  const el=document.getElementById('user-airway-list');
+  if(!el) return;
+  const aw=getUserAirways();
+  const keys=Object.keys(aw).sort();
+  if(keys.length===0){ el.innerHTML='<span style="opacity:.5">登録済みの航空路はありません</span>'; return; }
+  el.innerHTML=keys.map(k=>
+    `<div style="display:flex;justify-content:space-between;gap:6px;padding:2px 0">`+
+    `<span>${k} (${aw[k].length}wp): ${aw[k].join(' ')}</span>`+
+    `<span><a href="#" onclick="editUserAirway('${k}');return false" style="color:var(--hi);margin-right:6px">編集</a>`+
+    `<a href="#" onclick="deleteUserAirway('${k}');updateUserAirwayList();return false" style="color:#ff6666">削除</a></span>`+
+    `</div>`
+  ).join('');
+}
+
+function editUserAirway(name){
+  const aw=getUserAirways();
+  const wps=aw[name]||[];
+  document.getElementById('airway-name').value=name;
+  document.getElementById('airway-wps').value=wps.join(' ');
+}
+
+function saveUserAirwayFromUI(){
+  const name=document.getElementById('airway-name').value.trim();
+  const wpsStr=document.getElementById('airway-wps').value.trim();
+  if(!name||!wpsStr){ setAipStatus('航空路名と通過フィックスを入力してください','err'); return; }
+  addUserAirway(name,wpsStr);
+  updateUserAirwayList();
+  document.getElementById('airway-name').value='';
+  document.getElementById('airway-wps').value='';
+  setAipStatus('✓ 航空路を登録しました: '+name.toUpperCase(),'ok');
 }
 
 // WPTが無い時はGistを消さない - 既存データにマージして保存
