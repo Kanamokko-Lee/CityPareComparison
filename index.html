@@ -208,22 +208,31 @@ M646 closed between F319 and F329 from ABVAR to POTIB"></textarea>
       <div id="user-airway-list" style="font-family:'Share Tech Mono',monospace;font-size:0.62rem;color:var(--muted);max-height:100px;overflow-y:auto;margin-top:6px"></div>
     </div>
     <div class="setting-row">
-      <div class="setting-label">📦 ウェイポイント一括インポート</div>
-      <div class="setting-desc">各国AIPから抽出した複数件のウェイポイントを一度に取り込みます。下記2形式に対応：<br>
-        ① JSON形式: <code>{"NAME":[lat,lon,"WPT","備考"], ...}</code><br>
-        ② 簡易CSV形式: 1行に <code>NAME,lat,lon[,備考]</code>（カンマ区切り、ヘッダー行不要）<br>
-        既存と同名のフィックスは上書きされます（曖昧フィックスは別途AMBIGUOUS_FIXES設定が必要）。
+      <div class="setting-label">📦 ウェイポイント一括インポート（ソース単位管理）</div>
+      <div class="setting-desc">各国AIPから抽出した複数件のウェイポイントを「ソース」単位で取り込みます。<br>
+        <b>ソースキー</b>は何のデータか分かる名前（例: <code>SG_ENR4.4</code>, <code>TW_M750</code>）。<br>
+        同じソースキーで再度インポートすると、そのソースの内容が<b>完全に置き換わります</b>
+        （AIPが更新されて廃止されたフィックスは自動的に消えます）。<br>
+        手入力したフィックス（下の「ウェイポイント座標を登録・修正」欄）はソース更新の影響を受けません。<br>
+        対応形式：① JSON <code>{"NAME":[lat,lon,"WPT","備考"], ...}</code> ② CSV 1行 <code>NAME,lat,lon[,備考]</code>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+        <input id="wp-bulk-sourcekey" placeholder="ソースキー (例: SG_ENR4.4)" autocomplete="off" spellcheck="false"
+          style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.72rem;padding:7px 10px;outline:none">
         <textarea id="wp-bulk-text" rows="6" placeholder='{"ABVIP":[1.00222,103.84222,"WPT","SG AIP ENR4.4"], ...}&#10;または&#10;ABVIP,1.00222,103.84222,SG AIP ENR4.4'
           style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;resize:vertical"></textarea>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <button class="mb" onclick="previewBulkImport()">件数を確認</button>
-          <button class="mb pri" onclick="doBulkImportWP()">一括登録（localStorage）</button>
+          <button class="mb pri" onclick="doBulkImportWP()">このソースで登録（置換）</button>
           <button class="mb" onclick="syncToGist()">Gistへ保存</button>
         </div>
       </div>
       <div class="key-status" id="wp-bulk-status"></div>
+      <div class="setting-desc" style="margin-top:8px"><b>登録済みソース一覧：</b></div>
+      <div id="wp-source-list" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;color:var(--muted);max-height:120px;overflow-y:auto;margin-top:4px"></div>
+    </div>
+    <div class="setting-row" style="display:none">
+      <!-- 旧UI互換のため要素は残すが非表示（previewBulkImport/doBulkImportWPの旧呼び出しエラー回避用） -->
     </div>
     <div class="setting-row">
       <div class="setting-label">AIPソース・スナップショット保存</div>
@@ -285,15 +294,96 @@ const FIXED={
   BUBDO:[31.4320,136.6538,'WPT','BUBDO (JP ENR-4.3)'],
 };
 
-// ユーザー登録ウェイポイント（設定画面から追加可能、localStorageに永続保存）
-const USER_WP_KEY='user_waypoints_v1';
-function getUserWPs(){try{return JSON.parse(localStorage.getItem(USER_WP_KEY)||'{}');}catch{return {};}}
-function saveUserWPs(db){try{localStorage.setItem(USER_WP_KEY,JSON.stringify(db));}catch{}}
+// ═══════════════════════════════════════════════
+// ユーザー登録ウェイポイント（ソース単位管理）
+//
+// 構造:
+//   {
+//     _sources: {
+//       "SG_ENR4.4": { fetchedAt:"...", fixes:{ NAME:[lat,lon,type,note], ... } },
+//       "TW_M750":   { fetchedAt:"...", fixes:{ ... } },
+//       ...
+//     },
+//     _manual: { NAME:[lat,lon,type,note], ... }  // 設定画面から1件ずつ手入力したもの
+//   }
+//
+// 狙い: 2年後にAIPが更新されたら、該当ソースキー(例:"SG_ENR4.4")のfixesを
+// 新しい内容で完全に置き換える（古いキーは自動的に消える＝廃止フィックスが
+// 永遠にDBに残らない）。手入力(_manual)はソース更新の影響を受けない。
+//
+// getUserWPs()は後方互換のため、全ソース+_manualをマージした
+// フラットな {NAME:[lat,lon,type,note], ...} を返す（呼び出し側のコードは変更不要）。
+// 同名フィックスがソース間で重複する場合は _manual > 後から登録されたソース の順で上書き。
+// ═══════════════════════════════════════════════
+const USER_WP_KEY='user_waypoints_v1'; // 旧フラット形式（自動マイグレーション元として読む）
+const USER_WP_STORE_KEY='user_waypoints_store_v2'; // 新ソース単位構造
+
+function getWPStore(){
+  try{
+    const raw=localStorage.getItem(USER_WP_STORE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  // 新構造が無ければ、旧フラット形式(USER_WP_KEY)を_manualとして自動マイグレーション
+  let migrated={_sources:{}, _manual:{}};
+  try{
+    const old=JSON.parse(localStorage.getItem(USER_WP_KEY)||'{}');
+    if(Object.keys(old).length>0){
+      migrated._manual=old;
+      console.log('WP store migrated from flat v1 to source-based v2:',Object.keys(old).length,'fixes -> _manual');
+    }
+  }catch(e){}
+  saveWPStore(migrated);
+  return migrated;
+}
+function saveWPStore(store){
+  try{localStorage.setItem(USER_WP_STORE_KEY,JSON.stringify(store));}catch(e){}
+}
+// 後方互換: フラットな{NAME:[...]}を返す（既存コードはこれをそのまま使い続けられる）
+function getUserWPs(){
+  const store=getWPStore();
+  const flat={};
+  // ソースは登録順にマージ（後のソースが前のソースを上書き）、最後に_manualで上書き
+  for(const srcKey of Object.keys(store._sources||{})){
+    const fixes=store._sources[srcKey].fixes||{};
+    Object.assign(flat,fixes);
+  }
+  Object.assign(flat,store._manual||{});
+  return flat;
+}
+// 後方互換: フラットな辞書を渡されたら_manualとして保存する（1件ずつの登録・編集・削除用）
+function saveUserWPs(db){
+  const store=getWPStore();
+  store._manual=db;
+  saveWPStore(store);
+}
 function addUserWP(ident,lat,lon,name){
-  const db=getUserWPs();
-  db[ident.toUpperCase()]=[lat,lon,'WPT',name||ident];
-  saveUserWPs(db);
-  console.log(`UserWP saved: ${ident} = ${lat},${lon}`);
+  const store=getWPStore();
+  if(!store._manual) store._manual={};
+  store._manual[ident.toUpperCase()]=[lat,lon,'WPT',name||ident];
+  saveWPStore(store);
+  console.log(`UserWP saved (manual): ${ident} = ${lat},${lon}`);
+}
+// ソース単位の登録・置換（一括インポート用）。同じsourceKeyで再度呼ぶと
+// 前回のfixesは完全に捨てられ、新しい内容に置き換わる（廃止フィックス対策の本体）。
+function setWPSource(sourceKey,fixes,meta){
+  const store=getWPStore();
+  if(!store._sources) store._sources={};
+  store._sources[sourceKey]={
+    fetchedAt:new Date().toISOString(),
+    meta:meta||{},
+    fixes:fixes
+  };
+  saveWPStore(store);
+  console.log(`WP source set: ${sourceKey} = ${Object.keys(fixes).length} fixes (replaced old content)`);
+}
+function deleteWPSource(sourceKey){
+  const store=getWPStore();
+  if(store._sources) delete store._sources[sourceKey];
+  saveWPStore(store);
+}
+function listWPSources(){
+  const store=getWPStore();
+  return store._sources||{};
 }
 
 // ═══════════════════════════════════════════════
@@ -1842,16 +1932,17 @@ function previewBulkImport(){
 }
 
 function doBulkImportWP(){
+  const sourceKey=document.getElementById('wp-bulk-sourcekey').value.trim();
   const text=document.getElementById('wp-bulk-text').value;
+  if(!sourceKey){ setWpBulkStatus('ソースキーを入力してください（例: SG_ENR4.4）','err'); return; }
   try{
     const parsed=parseBulkWPText(text);
     const n=Object.keys(parsed).length;
     if(n===0){ setWpBulkStatus('解析できる行がありませんでした','err'); return; }
-    const db=getUserWPs();
-    Object.assign(db,parsed);
-    saveUserWPs(db);
+    setWPSource(sourceKey,parsed,{importedVia:'manual-ui'});
     updateUserWPList();
-    setWpBulkStatus(`✓ ${n}件を登録しました（localStorageに保存済み。Gistにも保存する場合は「Gistへ保存」を押してください）`,'ok');
+    updateWPSourceList();
+    setWpBulkStatus(`✓ ソース「${sourceKey}」に${n}件を登録しました（既存の同ソースデータは置き換え済み）。Gistにも保存する場合は「Gistへ保存」を押してください`,'ok');
     document.getElementById('wp-bulk-text').value='';
   }catch(e){
     setWpBulkStatus('✗ '+e.message,'err');
@@ -1863,6 +1954,31 @@ function setWpBulkStatus(msg,cls=''){
   if(!el) return;
   el.textContent=msg;
   el.className='key-status'+(cls?' '+cls:'');
+}
+
+// 登録済みソース一覧（件数・取得日時を表示。個別フィックスは表示しない＝大量データでも軽い）
+function updateWPSourceList(){
+  const el=document.getElementById('wp-source-list');
+  if(!el) return;
+  const sources=listWPSources();
+  const keys=Object.keys(sources).sort();
+  if(keys.length===0){ el.innerHTML='<span style="opacity:.5">登録済みのソースはありません</span>'; return; }
+  el.innerHTML=keys.map(k=>{
+    const s=sources[k];
+    const n=Object.keys(s.fixes||{}).length;
+    const d=s.fetchedAt? new Date(s.fetchedAt).toLocaleDateString('ja-JP') : '?';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--border)">
+      <span><b style="color:var(--accent)">${k}</b> — ${n}件 (${d})</span>
+      <a href="#" onclick="deleteWPSourceUI('${k}');return false" style="color:#ff6666">削除</a>
+    </div>`;
+  }).join('');
+}
+function deleteWPSourceUI(sourceKey){
+  if(!confirm(`ソース「${sourceKey}」を削除しますか？このソース由来の全フィックスがDBから消えます。`)) return;
+  deleteWPSource(sourceKey);
+  updateUserWPList();
+  updateWPSourceList();
+  setWpBulkStatus(`✓ ソース「${sourceKey}」を削除しました。Gistにも反映する場合は「Gistへ保存」を押してください`,'ok');
 }
 
 function saveUserWPFromUI(){
@@ -1893,10 +2009,13 @@ function saveUserWPFromUI(){
   if(ROUTES.length) document.getElementById('redraw-btn').style.display='inline-block';
 }
 
+// この一覧は「手入力(_manual)」のみを表示する。ソース由来の大量データ(数百〜数千件)は
+// ここには出さず、ソース管理一覧(updateWPSourceList等、別途)で件数とソースキーのみ確認する。
 function updateUserWPList(){
   const el=document.getElementById('user-wp-list');
   if(!el)return;
-  const db=getUserWPs();
+  const store=getWPStore();
+  const db=store._manual||{};
   const keys=Object.keys(db).sort();
   if(!keys.length){el.innerHTML='<div style="color:var(--muted);font-size:0.65rem">登録なし</div>';return;}
   el.innerHTML=keys.map(k=>{
@@ -1911,8 +2030,8 @@ function updateUserWPList(){
 }
 
 function editUserWP(ident){
-  const db=getUserWPs();
-  const v=db[ident];
+  const store=getWPStore();
+  const v=(store._manual||{})[ident];
   if(!v)return;
   document.getElementById('wp-ident').value=ident;
   document.getElementById('wp-lat').value=v[0].toFixed(5);
@@ -1921,9 +2040,9 @@ function editUserWP(ident){
 }
 
 function deleteUserWP(ident){
-  const db=getUserWPs();
-  delete db[ident];
-  saveUserWPs(db);
+  const store=getWPStore();
+  if(store._manual) delete store._manual[ident];
+  saveWPStore(store);
   updateUserWPList();
 }
 function openSettings(){
@@ -1942,6 +2061,7 @@ function openSettings(){
   updateCacheDesc();
   updateUserWPList();
   updateUserAirwayList();
+  updateWPSourceList();
 }
 
 function setGistStatus(msg,cls=''){
@@ -1958,23 +2078,31 @@ function saveGistSettings(){
   setGistStatus('✓ 保存しました','ok');
 }
 
+// Gistには2ファイルを保存する:
+//   waypoints_store.json … ソース単位の原本構造（_sources + _manual）。これが本体。
+//   waypoints.json        … 後方互換用。マージ済みフラット辞書（読み取り専用ミラー、
+//                            他のローカルツールや手動確認のために残す）。
 async function syncToGist(){
   const id=localStorage.getItem('gist_id');
   const tok=localStorage.getItem('gist_token');
   if(!id||!tok){setGistStatus('Gist IDとTokenを設定してください','err');return;}
   setGistStatus('保存中...');
   try{
-    const wps=getUserWPs();
-    // abc順にソート
-    const sorted={};
-    Object.keys(wps).sort().forEach(k=>sorted[k]=wps[k]);
+    const store=getWPStore();
+    const flat=getUserWPs(); // マージ済みフラット辞書（後方互換ミラー用）
+    const sortedFlat={};
+    Object.keys(flat).sort().forEach(k=>sortedFlat[k]=flat[k]);
     const r=await fetch(`https://api.github.com/gists/${id}`,{
       method:'PATCH',
       headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},
-      body:JSON.stringify({files:{'waypoints.json':{content:JSON.stringify(sorted,null,2)}}})
+      body:JSON.stringify({files:{
+        'waypoints_store.json':{content:JSON.stringify(store,null,2)},
+        'waypoints.json':{content:JSON.stringify(sortedFlat,null,2)}
+      }})
     });
     if(!r.ok) throw new Error('HTTP '+r.status);
-    setGistStatus('✓ Gistに保存しました（'+Object.keys(sorted).length+'件）','ok');
+    const srcCount=Object.keys(store._sources||{}).length;
+    setGistStatus(`✓ Gistに保存しました（ソース${srcCount}件 / 合計${Object.keys(sortedFlat).length}件）`,'ok');
   }catch(e){setGistStatus('✗ '+e.message,'err');}
 }
 
@@ -1989,12 +2117,27 @@ async function syncFromGist(){
     const r=await fetch(`https://api.github.com/gists/${id}`,{headers});
     if(!r.ok) throw new Error('HTTP '+r.status);
     const data=await r.json();
+    const storeFile=data.files?.['waypoints_store.json'];
+    if(storeFile){
+      // 新構造が見つかった場合はそのまま読み込む
+      const store=JSON.parse(storeFile.content);
+      saveWPStore(store);
+      updateUserWPList();
+      updateWPSourceList();
+      const flat=getUserWPs();
+      setGistStatus('✓ ソース構造を読み込みました（合計'+Object.keys(flat).length+'件）','ok');
+      return;
+    }
+    // 新構造がまだ無い場合は旧waypoints.json(フラット)を_manualとして取り込む
     const file=data.files?.['waypoints.json'];
-    if(!file) throw new Error('waypoints.jsonが見つかりません');
+    if(!file) throw new Error('waypoints_store.json / waypoints.jsonのいずれも見つかりません');
     const wps=JSON.parse(file.content);
-    saveUserWPs(wps);
+    const store=getWPStore();
+    store._manual={...(store._manual||{}),...wps};
+    saveWPStore(store);
     updateUserWPList();
-    setGistStatus('✓ '+Object.keys(wps).length+'件を読み込みました','ok');
+    updateWPSourceList();
+    setGistStatus('✓ (旧形式から)'+Object.keys(wps).length+'件を読み込みました','ok');
   }catch(e){setGistStatus('✗ '+e.message,'err');}
 }
 
@@ -2074,35 +2217,54 @@ function saveUserAirwayFromUI(){
   setAipStatus('✓ 航空路を登録しました: '+name.toUpperCase(),'ok');
 }
 
-// WPTが無い時はGistを消さない - 既存データにマージして保存
+// WPTが無い時はGistを消さない - 既存の_manualにマージして保存（ソース由来データは変更しない）
 async function syncToGistMerge(newWps){
   const id=localStorage.getItem('gist_id');
   const tok=localStorage.getItem('gist_token');
   if(!id||!tok) return false;
   try{
-    // 既存Gistデータを取得
+    // 既存Gistの新構造(waypoints_store.json)を取得
     const r=await fetch(`https://api.github.com/gists/${id}`,{
       headers:{'Authorization':'token '+tok,'Accept':'application/vnd.github+json'}
     });
-    let existing={};
+    let store={_sources:{},_manual:{}};
     if(r.ok){
       const data=await r.json();
-      const file=data.files?.['waypoints.json'];
-      if(file) try{existing=JSON.parse(file.content);}catch{}
+      const storeFile=data.files?.['waypoints_store.json'];
+      if(storeFile){
+        try{store=JSON.parse(storeFile.content);}catch{}
+      } else {
+        // 新構造が無ければ旧waypoints.jsonをフラットとして_manualに読み込む
+        const flatFile=data.files?.['waypoints.json'];
+        if(flatFile) try{store._manual=JSON.parse(flatFile.content);}catch{}
+      }
     }
-    // マージ（新しいものを上書き、既存は保持）
-    const merged={...existing,...newWps};
-    // abc順ソート
-    const sorted={};
-    Object.keys(merged).sort().forEach(k=>sorted[k]=merged[k]);
+    // _manualに新しいWPTをマージ（ソース由来データ_sourcesは触らない）
+    store._manual={...(store._manual||{}),...newWps};
+    const sortedManual={};
+    Object.keys(store._manual).sort().forEach(k=>sortedManual[k]=store._manual[k]);
+    store._manual=sortedManual;
+
+    // フラットミラーも再計算
+    const flat={};
+    for(const srcKey of Object.keys(store._sources||{})){
+      Object.assign(flat,store._sources[srcKey].fixes||{});
+    }
+    Object.assign(flat,store._manual);
+    const sortedFlat={};
+    Object.keys(flat).sort().forEach(k=>sortedFlat[k]=flat[k]);
+
     const r2=await fetch(`https://api.github.com/gists/${id}`,{
       method:'PATCH',
       headers:{'Authorization':'token '+tok,'Content-Type':'application/json'},
-      body:JSON.stringify({files:{'waypoints.json':{content:JSON.stringify(sorted,null,2)}}})
+      body:JSON.stringify({files:{
+        'waypoints_store.json':{content:JSON.stringify(store,null,2)},
+        'waypoints.json':{content:JSON.stringify(sortedFlat,null,2)}
+      }})
     });
     if(!r2.ok) throw new Error('HTTP '+r2.status);
-    console.log('Gist saved:',Object.keys(sorted).length,'waypoints');
-    return Object.keys(sorted).length;
+    console.log('Gist saved:',Object.keys(sortedFlat).length,'waypoints total');
+    return Object.keys(sortedFlat).length;
   }catch(e){console.warn('Gist sync failed:',e);return false;}
 }
 
@@ -2214,10 +2376,10 @@ document.addEventListener('keydown',function(e){
   if(document.getElementById('m-map').classList.contains('on')) closeMapPicker();
 });
 
-// FPDから取得したWPTをGistに自動保存（未登録のものだけ追加）
+// FPDから取得したWPTをGistに自動保存（未登録のものだけ追加、_manual扱い）
 async function autoSaveFPDWaypointsToGist(nodes){
   if(!localStorage.getItem('gist_id')||!localStorage.getItem('gist_token')) return;
-  const userWPs=getUserWPs();
+  const userWPs=getUserWPs(); // マージ済みフラット（重複チェック用）
   const newWps={};
   for(const n of nodes){
     const ident=n.ident||n.name;
@@ -2225,11 +2387,12 @@ async function autoSaveFPDWaypointsToGist(nodes){
     if(n.lat&&n.lon) newWps[ident]=[round5(n.lat),round5(n.lon),'WPT',ident];
   }
   if(Object.keys(newWps).length===0) return;
-  console.log('Auto-saving',Object.keys(newWps).length,'new FPD waypoints to Gist');
-  await syncToGistMerge({...userWPs,...newWps});
-  // localStorageにも保存
-  const allWPs={...userWPs,...newWps};
-  saveUserWPs(allWPs);
+  console.log('Auto-saving',Object.keys(newWps).length,'new FPD waypoints to Gist (_manual)');
+  await syncToGistMerge(newWps);
+  // localStorageにも反映（_manualへ）
+  const store=getWPStore();
+  store._manual={...(store._manual||{}),...newWps};
+  saveWPStore(store);
   updateUserWPList();
 }
 function round5(v){return Math.round(v*100000)/100000;}
