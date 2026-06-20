@@ -556,31 +556,46 @@ function parseRoutes(text){
 // BRIC "FPM RSTR" (Restrictions) パーサー
 // 例:
 //   L625 closed between F325 and F345 from TOMAN to AKMON
-//   M646 closed between F319 and F329 from ABVAR to POTIB
+//   System Description
+//   Closed all day from GND to F305 Closed all day from F365 to F385 ...
+//   FLAS: FL310-FL320 FL350-FL360 FL390-FL400
 // 同じ航空路名(L625, M646等)内で、同じ(from,to)の高度帯違いは1セグメントに統合。
 // 隣接(共有端点)するセグメントは1本の折れ線として連結。
 // 共有点が無い別区間(例: L625のTOMAN-AKMONとUDOSI-ANOKI)は
 // 同名航空路でも別ルート(L625-1, L625-2 ...)として描画する。
+// 各セグメントの制限詳細(高度帯、System Description、FLAS等)も保持し、
+// TRIPF/EETの代わりにラベルカードへ表示する。
 // ═══════════════════════════════════════════════
 function parseRestrictions(text){
   const COLORS=['#ff5566','#ffaa22','#00ddff','#33ee88','#cc66ff','#ffdd44','#ff8844'];
   const DASHES=[null,'10,5','14,5','6,4','8,4','10,4',null];
 
-  // "L625 closed between F325 and F345 from TOMAN to AKMON" を抽出
-  // 航空路名: 英字1-2文字 + 数字1-4桁 (L625, M646, Q14, W4, Y21, N892, P648等)
-  const re=/\b([A-Z]{1,2}\d{1,4})\s+closed\s+between\s+F?\d+\s+and\s+F?\d+\s+from\s+([A-Z]{3,6})\s+to\s+([A-Z]{3,6})/gi;
-  const segByAirway=new Map(); // airway -> Map("from|to" -> {from,to})  ※高度帯違いの重複を排除
+  // ヘッダー行 + その後ろの説明ブロック(次のヘッダー行の手前まで)をセットで抽出
+  const headerRe=/\b([A-Z]{1,2}\d{1,4})\s+closed\s+between\s+(F?\d+)\s+and\s+(F?\d+)\s+from\s+([A-Z]{3,6})\s+to\s+([A-Z]{3,6})/gi;
+  const headerMatches=[...text.matchAll(headerRe)];
+  if(headerMatches.length===0) return [];
 
-  let m;
-  while((m=re.exec(text))){
+  const segByAirway=new Map(); // airway -> Map("from|to" -> {from,to,bands:[{lo,hi,detail}]})
+
+  for(let h=0;h<headerMatches.length;h++){
+    const m=headerMatches[h];
     const airway=m[1].toUpperCase();
-    const from=m[2].toUpperCase();
-    const to=m[3].toUpperCase();
+    const lo=m[2].toUpperCase(), hi=m[3].toUpperCase();
+    const from=m[4].toUpperCase(), to=m[5].toUpperCase();
+
+    // このヘッダーの直後〜次のヘッダーの手前までを詳細テキストとして取得
+    const start=m.index+m[0].length;
+    const end=h+1<headerMatches.length?headerMatches[h+1].index:text.length;
+    let detail=text.slice(start,end).trim();
+    // 主要情報だけ簡潔に抜き出す（System Description以下、長すぎる場合は先頭数行に制限）
+    detail=detail.split('\n').map(l=>l.trim()).filter(Boolean).slice(0,6).join(' / ');
+
     if(!segByAirway.has(airway)) segByAirway.set(airway,new Map());
     const key=from+'|'+to;
     if(!segByAirway.get(airway).has(key)){
-      segByAirway.get(airway).set(key,{from,to});
+      segByAirway.get(airway).set(key,{from,to,bands:[]});
     }
+    segByAirway.get(airway).get(key).bands.push({lo,hi,detail});
   }
 
   if(segByAirway.size===0) return [];
@@ -591,27 +606,36 @@ function parseRestrictions(text){
     const segs=[...segMap.values()]; // ユニークな(from,to)組のみ、出現順
 
     // セグメントを「鎖」にグルーピング：端点を共有するものを連結
-    const chains=[]; // [[wp1,wp2,...], ...]
+    const chains=[]; // [{wps:[...], segs:[seg,...]}, ...]
     for(const seg of segs){
       let attached=false;
       for(const chain of chains){
-        const head=chain[0], tail=chain[chain.length-1];
-        if(seg.from===tail){ chain.push(seg.to); attached=true; break; }
-        if(seg.to===tail){ chain.push(seg.from); attached=true; break; }
-        if(seg.from===head){ chain.unshift(seg.to); attached=true; break; }
-        if(seg.to===head){ chain.unshift(seg.from); attached=true; break; }
+        const head=chain.wps[0], tail=chain.wps[chain.wps.length-1];
+        if(seg.from===tail){ chain.wps.push(seg.to); chain.segs.push(seg); attached=true; break; }
+        if(seg.to===tail){ chain.wps.push(seg.from); chain.segs.push(seg); attached=true; break; }
+        if(seg.from===head){ chain.wps.unshift(seg.to); chain.segs.push(seg); attached=true; break; }
+        if(seg.to===head){ chain.wps.unshift(seg.from); chain.segs.push(seg); attached=true; break; }
       }
-      if(!attached) chains.push([seg.from, seg.to]);
+      if(!attached) chains.push({wps:[seg.from, seg.to], segs:[seg]});
     }
 
     // 同一航空路に複数の独立区間がある場合はサブラベル(L625-1, L625-2...)で別ルート化
     chains.forEach((chain,ci)=>{
       const label = chains.length>1 ? `${airway}-${ci+1}` : airway;
+      // 高度帯の要約: "FL325-FL345 / FL365-FL385 / FL405-UNL" 形式
+      const bandSummary=chain.segs.flatMap(s=>s.bands.map(b=>{
+        const loS=b.lo==='F000'||b.lo==='000'?'GND':b.lo;
+        const hiS=/^F?999$/.test(b.hi)||/^F?1000$/.test(b.hi)?'UNL':b.hi;
+        return loS+'-'+hiS;
+      }));
       routes.push({
-        id:i+1, label, via:label+' RSTR',
+        id:i+1, label, via:chain.wps[0]+' → '+chain.wps[chain.wps.length-1],
         color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
+        isRstr:true,
+        bandSummary,
+        rstrDetail:chain.segs.flatMap(s=>s.bands.map(b=>b.detail)).filter(Boolean),
         tripf:0, time:0,
-        rawWps:chain
+        rawWps:chain.wps
       });
       i++;
     });
@@ -1190,16 +1214,25 @@ function placeLabels(){
     const el=document.createElement('div');
     el.className='rl'+(selId===r.id?' sel':'');el.id='lbl'+r.id;
     el.style.borderColor=r.color;el.style.left=x+'px';el.style.top=y+'px';
-    const isMin=r.tripf>0&&r.tripf===minTripf;
-    const diff=!isMin&&r.tripf>0?'+'+Math.round(r.tripf-minTripf).toLocaleString()+' lbs':null;
-    const tB=r.time===minTime,tW=r.time===maxTime&&vis.length>1;
-    el.innerHTML=
-      '<div class="rl-vrnt" style="color:'+r.color+'">'+r.label+'</div>'+
-      (r.via?'<div class="rl-via">'+r.via+'</div>':'')+
-      '<div class="rl-sep"></div>'+
-      '<div class="rl-row"><span class="rl-key">TRIPF</span><span class="rl-val">'+r.tripf.toLocaleString()+'</span></div>'+
-      (isMin?'<div class="rl-min">★ MIN</div>':(diff?'<div class="rl-diff">'+diff+'</div>':''))+
-      '<div class="rl-row"><span class="rl-key">EET</span><span class="rl-val '+(tB?'best':tW?'worst':'')+'">'+eet(r.time)+'</span></div>';
+    if(r.isRstr){
+      const bands=(r.bandSummary||[]).slice(0,4).map(b=>'<div class="rl-row"><span class="rl-val">'+b+'</span></div>').join('');
+      el.innerHTML=
+        '<div class="rl-vrnt" style="color:'+r.color+'">'+r.label+'</div>'+
+        (r.via?'<div class="rl-via">'+r.via+'</div>':'')+
+        '<div class="rl-sep"></div>'+
+        bands;
+    } else {
+      const isMin=r.tripf>0&&r.tripf===minTripf;
+      const diff=!isMin&&r.tripf>0?'+'+Math.round(r.tripf-minTripf).toLocaleString()+' lbs':null;
+      const tB=r.time===minTime,tW=r.time===maxTime&&vis.length>1;
+      el.innerHTML=
+        '<div class="rl-vrnt" style="color:'+r.color+'">'+r.label+'</div>'+
+        (r.via?'<div class="rl-via">'+r.via+'</div>':'')+
+        '<div class="rl-sep"></div>'+
+        '<div class="rl-row"><span class="rl-key">TRIPF</span><span class="rl-val">'+r.tripf.toLocaleString()+'</span></div>'+
+        (isMin?'<div class="rl-min">★ MIN</div>':(diff?'<div class="rl-diff">'+diff+'</div>':''))+
+        '<div class="rl-row"><span class="rl-key">EET</span><span class="rl-val '+(tB?'best':tW?'worst':'')+'">'+eet(r.time)+'</span></div>';
+    }
     el.addEventListener('click',()=>selRoute(r.id));
     mapEl.appendChild(el);labelEls[r.id]=el;
   });
@@ -1277,7 +1310,12 @@ function selRoute(id, doFit=true){
   });
   Object.entries(labelEls).forEach(([rid,el])=>el.classList.toggle('sel',parseInt(rid)===id));
   if(doFit&&polys[id])map.fitBounds(polys[id].getBounds(),{padding:[50,50]});
-  document.getElementById('ibar').textContent=r.label+' · '+r.via+' · TRIPF '+r.tripf.toLocaleString()+' / EET '+eet(r.time);
+  if(r.isRstr){
+    const bands=(r.bandSummary||[]).join(' / ');
+    document.getElementById('ibar').textContent=r.label+' · '+r.via+(bands?' · '+bands:'');
+  } else {
+    document.getElementById('ibar').textContent=r.label+' · '+r.via+' · TRIPF '+r.tripf.toLocaleString()+' / EET '+eet(r.time);
+  }
 }
 
 // ═══════════════════════════════════════════════
