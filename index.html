@@ -394,11 +394,64 @@ function listWPSources(){
 // ═══════════════════════════════════════════════
 const AIRWAYS_SEED={
   // 今後よく使う航空路をここに直接追加してもよい（コード埋め込み・Gist不要で即反映）
-  // 2026-06 JL0036 RJTT-WSSS BRIC RSTR資料調査時に確認した区間（SG AIP ENR3.2 27NOV2025）
-  L625:["TOMAN","UXEDA","VERIN","ISDEB","UPLAM","LUSMO","GUTUP","AKMON"],
-  M646:["VENUN","TOMAN"], // SG側で確認できたのはVENUN-TOMAN区間のみ。TW側(HCN-POTIB)は別途確認済みだが中間点未確認
-  // 2026-06 台湾AIP(ais.caa.gov.tw RC-ENR 3.2 M750-zh-TW)より確認
+  // 2026-06 JL0036 RJTT-WSSS BRIC RSTR資料調査時〜各国AIP調査で確認した区間
+  // --- シンガポールFIR (SG AIP ENR3.2, 27NOV2025) ---
+  L517:["TERIX","GULIB"],
+  L625:["AKMON","GUTUP","LUSMO","UPLAM","ISDEB","VERIN","UXEDA","TOMAN"],
+  L629:["DOLOX","NOPAT","VEPLI","BUVAL"],
+  L635:["MABLI","SUSAR","DUBSA","UGPEK","DOVOL"],
+  L642:["ESPOB","ENREP","VEPLI","EGOLO","ROBMO"],
+  L644:["DUDIS","MABLI","LIGVU"],
+  L649:["LAXOR","URKET","DAKIX"],
+  L762:["ASUNA","MIBEL"],
+  M522:["VINIK","NODIN"],
+  M630:["BOBAG","EMSIB","OMDUD","IRPUG","AKVOM","JUNHA"],
+  M635:["JUNHA","INVUB","ATPOM","SURGA"],
+  M646:["VENUN","TOMAN"], // SG側区間。台湾側はM646_TWキー参照
+  M753:["IPRIX","ENREP"],
+  M754:["VINIK","SUMLA"],
+  M758:["IDSEL","URIGO","VISAT","MABAL","ELGOR","UPVUN","OPULA","LUSMO","GULGU","TERIX","OLKIT"],
+  M761:["KETOD","OTLON","KILOT","LIPRO","OSERU"],
+  M763:["ENREP","TAXUL"],
+  M765:["IGARI","VENLI"],
+  M767:["TEGID","TODAM","TERIX","UKLIS","BOBOB","NIXEB","TOMAN"],
+  M768:["AKMON","LAGOT","TODAM","ASISU"],
+  M771:["DUDIS","DOLOX","DAMOG","DUBSA","VISAT","OTLON","RAXIM"],
+  M772:["LAXOR","BIDAG","ASISU"],
+  M774:["JUNHA","OTLAL","OBDOS"],
+  M904:["TIDAR","ODONO","UPRON","ENREP"],
+  N502:["BOBAG","PARDI"],
+  N875:["ENREP","NOPAT","DAMOG","SUSAR","MUMSO","ELGOR","AKDAT"],
+  N884:["LAXOR","LAGOT","RILRI","LUSMO","LEBIN","OLMUT","VEGLO","LIPRO","LENDA"],
+  N891:["IGARI","IKUMI","ENREP","UGPEK","URIGO","MANIM","OBDAB"],
+  N892:["MELAS","MABLI","MUMSO","MABAL","KILOT","KIBOL","PEKLA"], // SG側区間。台湾側はN892_TWキー参照
+  P501:["ARAMA","BOBAG","UXATI","POSOG","ANITO"],
+  Q801:["ESPOB","ESBUM"],
+  Q802:["IPRIX","ESBUM","ELALO"],
+  Q803:["UPRON","IPDOL","KEXOL","ELALO"],
+  T21:["JUNHA","VEBMA","TOMAN","DODSO"],
+  T22:["OBDOS","UGEBO"],
+  T23:["SURGA","UGEBO","JUNHA"],
+  T24:["JUNHA","GURES","IDBUD","SURGA"],
+  T25:["AVLUB","IGUTU"],
+  T611:["IPRIX","IPDOL","IDSEL"],
+  T612:["DOLOX","IDSEL"],
+  Y334:["DOVOL","PADLI"],
+  Y335:["IDSEL","PADLI"],
+  Y336:["KETOD","PADLI"],
+  Y339:["AKOMA","AROSO"],
+  Y342:["AROSO"],
+  Y514:["VIRID","NUFFA"],
+  // --- 台湾(Taipei FIR) (TW AIP ENR3.2各航空路ページ) ---
+  M646_TW:["HCN","POTIB"], // 台湾側区間。SG側はM646キー参照（両区間の接続関係は未確認）
   M750:["ENVAR","DADON","EXTRA","RENOT","TONGA","TOROX","ANLOT","PILOX","SANAS","KUDOS","LEKOS","MORSU","MOLKA"],
+  N892_TW:["HCN","KABAM"], // 台湾側区間。SG側はN892キー参照（両区間の接続関係は未確認）
+  Q11:["SALMI","MUNNA","SCOOP","METRO","DRAKE","FANPY","TINHO","TITUS","WAGON","JICHI","TACLE","GID","PICHU","POTIB"],
+  Q12:["TACLE","YANMA","ZUBAT","KABAM"],
+  Q13:["IGURU","TULTO","BOGUM","SHIJA","PICHU","GLOOM","KABAM"],
+  Q14:["TNN","ABSOL","ZUBAT","GLOOM","POTIB"],
+  R200:["OLDID","ANPOG","EXTRA","CYRUS"],
+  R596:["SULEM","OLIVE","VIOLA","BERBA"],
 };
 const USER_AIRWAYS_KEY='user_airways_v1';
 function getUserAirways(){try{return JSON.parse(localStorage.getItem(USER_AIRWAYS_KEY)||'{}');}catch{return {};}}
@@ -485,6 +538,14 @@ const AMBIGUOUS_FIXES={
   BIPOP:[[1.52278,104.17167,'SG周辺']],   // 既定(DB)は中国南部
   JUNHA:[[0.90361,104.51444,'SG周辺']],   // 既定(DB)は韓国
   TEBUN:[[1.24861,103.26583,'SG周辺']],   // 既定(DB)は中国四川省
+  // 2026-06 台湾(TW)・香港(HK)AIP調査時に発覚（既定DBは日本側の座標）
+  OLIVE:[[27.43806,122.85167,'TW/HK周辺']], // 既定(DB)は兵庫県沖
+  VIOLA:[[27.22139,122.94111,'TW/HK周辺']], // 既定(DB)は千葉県沖
+  BETTY:[[21.48611,114.55861,'TW/HK周辺']], // 既定(DB)は沖縄付近
+  GAMBA:[[21.31889,112.92667,'TW/HK周辺']], // 既定(DB)は近畿付近
+  MAPLE:[[21.37389,113.095,'TW/HK周辺']],   // 既定(DB)は中部付近
+  COMBI:[[21.49361,113.46222,'TW/HK周辺']], // 既定(DB)は中部付近
+  CANTO:[[21.65056,113.70694,'TW/HK周辺']], // 既定(DB)は近畿付近
 };
 function gcNmSafe(a,b){
   if(!a||!b)return Infinity;
