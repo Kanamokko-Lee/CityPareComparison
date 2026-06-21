@@ -206,6 +206,15 @@ M646 closed between F319 and F329 from ABVAR to POTIB"></textarea>
         </div>
       </div>
       <div id="user-airway-list" style="font-family:'Share Tech Mono',monospace;font-size:0.62rem;color:var(--muted);max-height:100px;overflow-y:auto;margin-top:6px"></div>
+      <div class="setting-desc" style="margin-top:10px"><b>📦 複数航空路を一括登録：</b>1行に1航空路、<code>航空路名=FIX1,FIX2,FIX3,...</code> の形式で貼ってください（ClaudeがAIPから抜き出したテキストをそのまま貼るだけでOK）。</div>
+      <textarea id="airway-bulk-text" rows="6" placeholder="L625=ARESI,ANOKI,AGSAM,ALDAS,UDOSI,AKMON,GUTUP,LUSMO,UPLAM,ISDEB,VERIN,UXEDA,TOMAN&#10;M646=VENUN,TOMAN&#10;..."
+        style="background:#060c18;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:0.68rem;padding:7px 10px;outline:none;resize:vertical;margin-top:4px"></textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button class="mb" onclick="previewAirwayBulkImport()">件数を確認</button>
+        <button class="mb pri" onclick="doBulkImportAirways()">一括登録</button>
+        <button class="mb" onclick="syncAirwaysToGist()">Gistへ保存</button>
+      </div>
+      <div class="key-status" id="airway-bulk-status"></div>
     </div>
     <div class="setting-row">
       <div class="setting-label">📦 ウェイポイント一括インポート（ソース単位管理）</div>
@@ -2323,6 +2332,60 @@ function saveUserAirwayFromUI(){
   document.getElementById('airway-name').value='';
   document.getElementById('airway-wps').value='';
   setAipStatus('✓ 航空路を登録しました: '+name.toUpperCase(),'ok');
+}
+
+// ═══════════════════════════════════════════════
+// 航空路 一括インポート（複数航空路を1回のコピペで登録）
+// 形式: 1行に1航空路、"航空路名=FIX1,FIX2,FIX3,..." または "航空路名:FIX1 FIX2 FIX3"
+// index.htmlのコード書き換え無しで、Claudeが調べた航空路データを反映できるようにするための機能。
+// ═══════════════════════════════════════════════
+function parseAirwayBulkText(text){
+  text=text.trim();
+  if(!text) return {};
+  const out={};
+  for(const rawLine of text.split('\n')){
+    const line=rawLine.trim();
+    if(!line||line.startsWith('#')) continue;
+    // 区切り文字は "=" または ":" のどちらでも許容
+    const sepMatch=line.match(/^([A-Za-z0-9]+)\s*[:=]\s*(.+)$/);
+    if(!sepMatch) continue;
+    const name=sepMatch[1].toUpperCase();
+    // フィックス列はカンマ・スペース・タブ区切りのどれでも許容
+    const wps=sepMatch[2].split(/[,\s]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
+    if(wps.length>=1) out[name]=wps;
+  }
+  return out;
+}
+
+function previewAirwayBulkImport(){
+  const text=document.getElementById('airway-bulk-text').value;
+  const parsed=parseAirwayBulkText(text);
+  const n=Object.keys(parsed).length;
+  if(n===0){ setAirwayBulkStatus('解析できる行がありませんでした（形式: L625=WP1,WP2,...）','err'); return; }
+  const sample=Object.entries(parsed).slice(0,3).map(([k,v])=>`${k}(${v.length}点)`).join(', ');
+  setAirwayBulkStatus(`✓ ${n}航空路を検出: ${sample}${n>3?' ...':''}`,'ok');
+}
+
+function doBulkImportAirways(){
+  const text=document.getElementById('airway-bulk-text').value;
+  const parsed=parseAirwayBulkText(text);
+  const n=Object.keys(parsed).length;
+  if(n===0){ setAirwayBulkStatus('解析できる行がありませんでした（形式: L625=WP1,WP2,...）','err'); return; }
+  const db=getUserAirways();
+  for(const [name,wps] of Object.entries(parsed)){
+    db[name]=wps;
+  }
+  saveUserAirways(db);
+  updateUserAirwayList();
+  setAirwayBulkStatus(`✓ ${n}航空路を登録しました。Gistにも保存する場合は「Gistへ保存」を押してください`,'ok');
+  document.getElementById('airway-bulk-text').value='';
+}
+
+function setAirwayBulkStatus(msg,cls=''){
+  const el=document.getElementById('airway-bulk-status');
+  if(!el) return;
+  el.textContent=msg;
+  el.className='key-status'+(cls?' '+cls:'');
 }
 
 // WPTが無い時はGistを消さない - 既存の_manualにマージして保存（ソース由来データは変更しない）
