@@ -642,11 +642,9 @@ function getApiKey(){
 }
 
 // ═══════════════════════════════════════════════
-// ═══════════════════════════════════════════════
 // API KEY
+// （getApiKeyはsessionStorageフォールバック付きの版を上で定義済み）
 // ═══════════════════════════════════════════════
-function getApiKey(){return localStorage.getItem('fpd_api_key')||'';}
-
 function setKeyStatus(msg,cls=''){
   const el=document.getElementById('key-status');
   el.textContent=msg; el.className='key-status'+(cls?' '+cls:'');
@@ -995,6 +993,7 @@ function parseRestrictions(text){
         id:i+1, label, via:chain.wps[0]+' → '+chain.wps[chain.wps.length-1],
         color:COLORS[i%COLORS.length], dash:DASHES[i%DASHES.length],
         isRstr:true,
+        airway, // 航空路名（L625等）。描画時にsliceAirwayで中間フィックスを補完するために保持
         bandSummary,
         rstrDetail:chain.segs.flatMap(s=>s.bands.map(b=>b.detail)).filter(Boolean),
         tripf:0, time:0,
@@ -1309,6 +1308,7 @@ async function getJMARadarTime(){
 
 async function toggleWxJMA(){
   const btn=document.getElementById('btn-jma');
+  if(!btn){console.warn('btn-jma not found: JMAレーダーボタンはUIに未配置');return;}
   if(wxActive.jma){
     if(wxLayers.jma){map.removeLayer(wxLayers.jma);wxLayers.jma=null;}
     wxActive.jma=false;btn.classList.remove('active');return;
@@ -1359,11 +1359,11 @@ async function toggleTyphoon(){
       alert('現在、活動中の台風はありません');
       btn.textContent='🌀';return;
     }
-    for(const tc of list){
-      // eventIdの形式を確認してから渡す
-      const eventId=tc.eventId||tc.id||(typeof tc==='string'?tc:null);
-      console.log('Processing typhoon:', eventId, tc);
-      if(eventId) await drawTyphoon(eventId, PROXY);
+    // typhoon.jsonは同じ台風の発表履歴を全部含むため、eventIdで重複排除する
+    const eventIds=[...new Set(list.map(tc=>tc.eventId||tc.id||(typeof tc==='string'?tc:null)).filter(Boolean))];
+    console.log('Unique typhoon eventIds:', eventIds);
+    for(const eventId of eventIds){
+      await drawTyphoon(eventId, PROXY);
     }
     if(typhoonLayers.length>0){
       typhoonActive=true;btn.classList.add('active');
@@ -1449,81 +1449,45 @@ async function drawTyphoon(eventId, PROXY){
   }catch(e){console.warn('drawTyphoon error:',e);}
 }
 
-async function drawTyphoon(eventId){
-  try{
-    // 正式API: specifications.json
-    const r=await fetch(`https://www.jma.go.jp/bosai/typhoon/data/${eventId}/specifications.json`);
-    if(!r.ok){ console.warn('Typhoon spec not found:', eventId, r.status); return; }
-    const spec=await r.json();
-    console.log('Typhoon spec:', JSON.stringify(spec).slice(0,400));
-
-    const color='#ff4444';
-    const fcolor='#ff8800';
-    const name=spec.nameJp||spec.nameEn||spec.name||eventId;
-
-    // 実況点（現在位置）
-    const cur=spec.current||spec.analysis;
-    if(cur&&cur.lat&&cur.lon){
-      const m=L.circleMarker([cur.lat,cur.lon],{
-        radius:14,color,fillColor:color,fillOpacity:0.25,weight:3
-      }).bindPopup(
-        `<div class="pn">🌀 ${name}</div>`+
-        `<div class="ps">中心気圧: ${cur.pressure||'?'} hPa<br>`+
-        `最大風速: ${cur.maxWindSpeed||cur.wind||'?'} kt</div>`
-      ).addTo(map);
-      typhoonLayers.push(m);
-    }
-
-    // 予報経路
-    const forecasts=spec.forecast||spec.forecasts||[];
-    const fpts=forecasts.filter(p=>p.lat&&p.lon).map(p=>[p.lat,p.lon]);
-    if(cur&&fpts.length){
-      const fl=L.polyline([[cur.lat,cur.lon],...fpts],{
-        color:fcolor,weight:2.5,opacity:0.85,dashArray:'10,6'
-      }).addTo(map);
-      typhoonLayers.push(fl);
-
-      forecasts.filter(p=>p.lat&&p.lon).forEach(p=>{
-        // 予報円
-        const nm=p.forecastCircle||p.circle||p.radius||0;
-        if(nm>0){
-          const c=L.circle([p.lat,p.lon],{
-            radius:nm*1852,color:fcolor,fillColor:fcolor,fillOpacity:0.04,weight:1
-          }).addTo(map);
-          typhoonLayers.push(c);
-        }
-        const timeStr=p.validTime||p.time||'';
-        const label=timeStr?new Date(timeStr).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
-        const fm=L.circleMarker([p.lat,p.lon],{
-          radius:5,color:fcolor,fillColor:fcolor,fillOpacity:0.7,weight:1.5
-        }).bindPopup(`<div class="ps">${label}<br>気圧: ${p.pressure||'?'} hPa<br>風速: ${p.maxWindSpeed||p.wind||'?'} kt</div>`).addTo(map);
-        typhoonLayers.push(fm);
-      });
-    }
-  }catch(e){console.warn('drawTyphoon error:',e);}
-}
 
 let ROUTES=[],polys={},hidden=new Set(),selId=null,labelEls={};
 
 // 名前の配列(names)を座標点配列に変換する。曖昧フィックス(AMBIGUOUS_FIXES)は
-// 直前に確定した点との距離で正しい候補を選ぶ（逐次処理）。
+// 2パス方式で解決する: 1パス目で非曖昧フィックスを確定し、2パス目で曖昧フィックスを
+// 「前後の直近確定点との距離」で判定する。これにより経路の先頭が曖昧フィックスでも
+// 後続の点から正しい候補を選べる。
 function resolveNamesToPoints(names){
+  // 1パス目: 非曖昧フィックスのみ解決
+  const resolved=names.map(n=>AMBIGUOUS_FIXES[n]?null:lookup(n));
+  // 2パス目: 曖昧フィックスを前後の確定点で解決
   const pts=[];
-  let prevPt=null;
   for(let i=0;i<names.length;i++){
-    const n=names[i];
-    // 次の未解決名がまだ無いので、曖昧解決にはprevPtのみ使う（次の点は逐次確定前なのでnext未使用）
-    const d=AMBIGUOUS_FIXES[n] ? resolveAmbiguous(n,prevPt,null) : lookup(n);
+    let d=resolved[i];
+    if(!d && AMBIGUOUS_FIXES[names[i]]){
+      let prev=null,next=null;
+      for(let j=i-1;j>=0;j--){ if(resolved[j]){prev={lat:resolved[j][0],lon:resolved[j][1]};break;} }
+      for(let j=i+1;j<names.length;j++){ if(resolved[j]){next={lat:resolved[j][0],lon:resolved[j][1]};break;} }
+      d=resolveAmbiguous(names[i],prev,next);
+    }
     if(!d) continue;
-    const pt={lat:d[0],lon:d[1],type:d[2]||'WPT',name:n,est:!!(d[3]&&d[3].includes('推定'))};
-    pts.push(pt);
-    prevPt=pt;
+    pts.push({lat:d[0],lon:d[1],type:d[2]||'WPT',name:names[i],est:!!(d[3]&&d[3].includes('推定'))});
   }
   return pts;
 }
 
 function resolveRouteLocal(r){
-  // legs情報があれば、各2点間の航空路を調べて中間フィックスを補完する
+  // RSTRルート: 航空路名(r.airway)が分かっているので、各区間をsliceAirwayで展開して
+  // 中間フィックスを補完する（AIRWAYS_SEEDやユーザー登録航空路に定義があれば曲がった経路になる）
+  if(r.isRstr && r.airway){
+    const expanded=[r.rawWps[0]];
+    for(let i=0;i<r.rawWps.length-1;i++){
+      const seg=sliceAirway(r.airway, r.rawWps[i], r.rawWps[i+1]);
+      if(seg && seg.length>2) expanded.push(...seg.slice(1,-1));
+      expanded.push(r.rawWps[i+1]);
+    }
+    return sanitize(resolveNamesToPoints(expanded));
+  }
+  // VRNTルート: legs情報があれば、各2点間の航空路を調べて中間フィックスを補完する
   if(r.legs && r.legs.length===r.rawWps.length-1){
     const expanded=[r.rawWps[0]];
     for(let i=0;i<r.legs.length;i++){
@@ -2329,12 +2293,12 @@ function editUserAirway(name){
 function saveUserAirwayFromUI(){
   const name=document.getElementById('airway-name').value.trim();
   const wpsStr=document.getElementById('airway-wps').value.trim();
-  if(!name||!wpsStr){ setAipStatus('航空路名と通過フィックスを入力してください','err'); return; }
+  if(!name||!wpsStr){ setAirwayBulkStatus('航空路名と通過フィックスを入力してください','err'); return; }
   addUserAirway(name,wpsStr);
   updateUserAirwayList();
   document.getElementById('airway-name').value='';
   document.getElementById('airway-wps').value='';
-  setAipStatus('✓ 航空路を登録しました: '+name.toUpperCase(),'ok');
+  setAirwayBulkStatus('✓ 航空路を登録しました: '+name.toUpperCase(),'ok');
 }
 
 // ═══════════════════════════════════════════════
